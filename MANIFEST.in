@@ -1,0 +1,2 @@
+include src/pgtracer/ebpf/code/*.c
+include src/pgtracer/ebpf/code/*.h
