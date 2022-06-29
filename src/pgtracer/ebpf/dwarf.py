@@ -11,21 +11,12 @@ definitions.
 from __future__ import annotations
 
 import ctypes as ct
+import json
 import struct
 from collections import defaultdict
 from enum import IntEnum
-import json
 from pathlib import Path
-from typing import (
-    TYPE_CHECKING,
-    Dict,
-    Generator,
-    Optional,
-    Set,
-    Tuple,
-    Type,
-    Union,
-)
+from typing import TYPE_CHECKING, Dict, Generator, Optional, Set, Tuple, Type, Union
 
 from elftools.common.utils import struct_parse
 from elftools.construct import Struct as ConStruct
@@ -37,7 +28,6 @@ from elftools.dwarf.ranges import BaseAddressEntry, RangeEntry
 from elftools.elf.elffile import ELFFile
 from elftools.elf.sections import Section
 from psutil import Process
-
 
 if TYPE_CHECKING:
     from ctypes import _CData

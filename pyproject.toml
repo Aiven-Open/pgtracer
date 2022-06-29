@@ -30,3 +30,6 @@ lint = [
   'black',
   'pylint-exit'
 ]
+
+[tool.isort]
+profile = "black"
