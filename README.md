@@ -2,7 +2,7 @@ PGTracer
 ========
 
 PGTracer is a collection of tools to trace queries, execution plans and more in
-PostgreSQL, using eBPF.
+PostgreSQL®, using eBPF.
 
 Overview
 ========
@@ -32,3 +32,8 @@ Contact
 ============
 Bug reports and patches are very welcome, please post them as GitHub issues and pull requests at https://github.com/aiven/pgtracer .
 To report any possible vulnerabilities or other serious issues please see our [security](SECURITY.md) policy.
+
+Trademarks
+==========
+
+The terms Postgres and PostgreSQL are registered trademarks of the PostgreSQL Community Association of Canada.
