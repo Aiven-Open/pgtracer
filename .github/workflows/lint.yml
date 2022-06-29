@@ -1,0 +1,52 @@
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - '**'
+  pull_request:
+
+jobs:
+
+  lint:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        # only use one version for the lint step
+        python-version: [3.9]
+
+    steps:
+
+      - id: checkout
+        uses: actions/checkout@v2
+        with:
+          # Do not persist the token during execution of this job.
+          persist-credentials: false
+
+      - id: dependencies
+        run: |
+          # Must be installed via the system
+          sudo apt install python3-bpfcc python3-pip
+          pip install setuptools toml
+          # Install requirements from pyproject.toml
+          python -c 'import toml; open("requirements.txt.tmp", "w").write("\n".join(toml.load(open("pyproject.toml"))["project"]["dependencies"]) + "\n")'
+          # Install lint requirements
+          python -c 'import toml; open("requirements.txt.tmp", "a").write("\n".join(toml.load(open("pyproject.toml"))["project"]["optional-dependencies"]["lint"]) + "\n")'
+          pip install -r requirements.txt.tmp
+          python -c "import bcc; print(bcc.__file__)"
+
+      - id: pylint
+        run: pylint --rcfile .pylintrc src/ || pylint-exit $? -efail
+
+      - id: mypy
+        run: python -m mypy src/
+
+      - id: validate-style
+        run: |
+          isort --recursive src/
+          black src/
+          if [ $(git diff --name-only --diff-filter=ACMR | wc -l ) != 0 ]; then
+            echo "Reformatting failed! Please run make fmt on your commits and resubmit!" 1>&2;
+            git diff;
+            exit 1;
+          fi

@@ -21,3 +21,12 @@ classifiers = [
 
 [project.scripts]
 pgtrace_queries = "scripts.pgtrace_queries:main"
+
+[project.optional-dependencies]
+lint = [
+  'pylint',
+  'mypy',
+  'isort',
+  'black',
+  'pylint-exit'
+]
