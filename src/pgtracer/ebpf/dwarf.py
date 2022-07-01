@@ -16,14 +16,27 @@ import struct
 from collections import defaultdict
 from enum import IntEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, Generator, Optional, Set, Tuple, Type, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Generator,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    Type,
+    Union,
+)
 
 from elftools.common.utils import struct_parse
+from elftools.construct import Container
 from elftools.construct import Struct as ConStruct
 from elftools.construct import ULInt32
 from elftools.dwarf import constants as dwarf_consts
 from elftools.dwarf.die import DIE
 from elftools.dwarf.dwarf_expr import DWARFExprParser
+from elftools.dwarf.dwarfinfo import DWARFInfo
 from elftools.dwarf.ranges import BaseAddressEntry, RangeEntry
 from elftools.elf.elffile import ELFFile
 from elftools.elf.sections import Section
@@ -54,11 +67,14 @@ def extract_buildid(elffile: ELFFile) -> Optional[str]:
     buildid_section = elffile.get_section_by_name(".note.gnu.build-id")
     for note in buildid_section.iter_notes():
         if note["n_type"] == "NT_GNU_BUILD_ID":
-            return note["n_desc"]
+            n_desc: str = note["n_desc"]
+            return n_desc
     return None
 
 
-def find_debuginfo(elf_file: ELFFile, buildid: str = None) -> Optional[ELFFile]:
+def find_debuginfo(
+    elf_file: ELFFile, buildid: Optional[str] = None
+) -> Optional[ELFFile]:
     """
     Find the debug information for a given program.
     Either the ELFFile contains the debug information directly, or we can use
@@ -98,8 +114,9 @@ def die_name(die: DIE) -> Optional[str]:
     Extract a DIE name as an str.
     """
     if "DW_AT_name" in die.attributes:
-        return die.attributes["DW_AT_name"].value.decode("utf8")
-    elif "DW_AT_abstract_origin" in die.attributes:
+        name: str = die.attributes["DW_AT_name"].value.decode("utf8")
+        return name
+    if "DW_AT_abstract_origin" in die.attributes:
         origin = die.get_DIE_from_attribute("DW_AT_abstract_origin")
         return die_name(origin)
     return None
@@ -114,7 +131,7 @@ def die_match(die: DIE, tag: str, name: str) -> bool:
     return die_name(die) == name
 
 
-def get_location(die):
+def get_location(die: DIE) -> int:
     """
     Returns the location from a DIE.
     """
@@ -125,7 +142,7 @@ def get_location(die):
     else:
         raise ValueError("Don't know how to get location from DIE")
     attr = die.attributes[attname]
-
+    assert isinstance(attr.value, int)
     return attr.value
 
 
@@ -136,7 +153,7 @@ class GDBIndex:
     in the dwarf information.
     """
 
-    def __init__(self, section: Section, dwarf_info):
+    def __init__(self, section: Section, dwarf_info: DWARFInfo):
         self.dwarf_info = dwarf_info
         self.structs = self.dwarf_info.structs
         self.section = section
@@ -148,7 +165,7 @@ class GDBIndex:
             self.header.constant_pool_offset - self.header.symbol_table_offset
         ) // self.htab_entry_size
 
-    def parse_header(self):
+    def parse_header(self) -> Container:
         """
         Parse the .gdb_index_header section.
         """
@@ -179,7 +196,7 @@ class GDBIndex:
 
         return ct.c_uint32(r)
 
-    def find_symbol(self, symbol_str: str) -> list:
+    def find_symbol(self, symbol_str: str) -> List[Tuple[int, int]]:
         """
         Find a symbol in the hashtable, and returns the associated cu_vector.
         """
@@ -206,7 +223,7 @@ class GDBIndex:
 
         return cu_vector
 
-    def _read_cu_vector_at(self, cv_off: int) -> list:
+    def _read_cu_vector_at(self, cv_off: int) -> List[Tuple[int, int]]:
         """
         Read a cu_vector at a specific offset.
         """
@@ -288,9 +305,9 @@ class Enums:
     This loads and cache enum definitions from the DWARF info.
     """
 
-    def __init__(self, metadata):
+    def __init__(self, metadata: ProcessMetadata):
         self.metadata = metadata
-        self._cache = {}
+        self._cache: Dict[str, Type[IntEnum]] = {}
 
     def __getattr__(self, enum_name: str) -> Optional[Type[IntEnum]]:
         """
@@ -329,7 +346,7 @@ class StructMemberDefinition:
         self.member_type = member_type
         self.offset = offset
 
-    def extract_from_struct(self, buffer_addr: int):
+    def extract_from_struct(self, buffer_addr: int) -> Any:
         """
         Parse the member from a buffer representing the parent struct.
         """
@@ -400,7 +417,7 @@ class Struct:
                 return cls.fields_defs[attrname]
         return None
 
-    def __getattr__(self, attrname: str):
+    def __getattr__(self, attrname: str) -> Any:
         """
         Load the value of attribute attrname from the payload associated to
         this struct, parsing it from the field definition.
@@ -419,11 +436,13 @@ class Struct:
         return self.members[attrname]
 
     @classmethod
-    def size(cls):
+    def size(cls) -> int:
         """
         Returns the sizeof() this struct as stored in the DWARF information.
         """
-        return cls.die.attributes["DW_AT_byte_size"].value
+        size = cls.die.attributes["DW_AT_byte_size"].value
+        assert isinstance(size, int)
+        return size
 
 
 class Structs:
@@ -431,9 +450,9 @@ class Structs:
     Namespace for dynamically loading Struct definitions from the DWARF info.
     """
 
-    def __init__(self, metadata):
+    def __init__(self, metadata: ProcessMetadata):
         self.metadata = metadata
-        self.cache = {}
+        self.cache: Dict[str, Type[Struct]]
 
     def __getattr__(self, attrname: str) -> Type[Struct]:
         """
@@ -456,7 +475,7 @@ class CacheJSONEncoder(json.JSONEncoder):
     before storing them to disk.
     """
 
-    def default(self, o):
+    def default(self, o: Any) -> Any:
         if isinstance(o, set):
             return list(o)
         return super().default(o)
@@ -496,7 +515,9 @@ class ProcessMetadata:
         self.enums = Enums(self)
         self.structs = Structs(self)
 
-    def _load_or_build_naive_index(self):
+    def _load_or_build_naive_index(self) -> None:
+        if self.buildid is None:
+            return
         build_index_dir = Path("~/.cache").expanduser() / "pgtracer"
         if not build_index_dir.exists():
             build_index_dir.mkdir()
@@ -572,7 +593,7 @@ class ProcessMetadata:
         symbol = symtab.get_symbol_by_name(variable_name)
 
         if symbol:
-            return symbol[0]["st_value"] + self.base_addr
+            return int(symbol[0]["st_value"]) + self.base_addr
         # If it fails, fallback to DWARF
         dies = self.search_symbol("DW_TAG_variable", variable_name)
         parser = DWARFExprParser(self.dwarf_info.structs)
@@ -584,7 +605,7 @@ class ProcessMetadata:
                 if len(expr) != 1 and expr[0].op_name != "DW_OP_addr":
                     raise ValueError("Located variable doesn't seem to be a global")
 
-                return expr[0].args[0] + self.base_addr
+                return int(expr[0].args[0]) + self.base_addr
         return None
 
     def function_addresses(self, function_name: str) -> Generator[int, None, None]:
