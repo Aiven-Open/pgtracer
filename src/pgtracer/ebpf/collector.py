@@ -11,7 +11,7 @@ from __future__ import annotations
 import ctypes as ct
 from enum import IntEnum
 from pathlib import Path
-from typing import Dict, Optional, Type
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 
 from bcc import BPF
 from psutil import Process
@@ -35,7 +35,7 @@ def intenum_to_c(intenum: Type[IntEnum]) -> str:
     return buf
 
 
-def defines_dict_to_c(defines_dict: dict) -> str:
+def defines_dict_to_c(defines_dict: Dict[str, Any]) -> str:
     """
     Generate a string of C #define directives from a mapping.
     """
@@ -78,7 +78,7 @@ class portal_key(ct.Structure):
 
     _fields_ = [("pid", ct.c_ulong), ("creation_time", ct.c_ulong)]
 
-    def as_tuple(self):
+    def as_tuple(self) -> Tuple[int, int]:
         """
         Returns the struct as tuple.
         """
@@ -113,14 +113,12 @@ class EventHandler:
     class itself.
     """
 
-    def __init__(self):
-        self.query_cache = {}
-        self.query_history = []
-        self.last_portal_key = None
+    def __init__(self) -> None:
+        self.query_cache: Dict[Tuple[int, int], Query] = {}
+        self.query_history: List[Query] = []
+        self.last_portal_key: Optional[Tuple[int, int]] = None
 
-    def handle_event(
-        self, bpf_collector: BPF_Collector, event: ct.c_void_p
-    ) -> Optional[int]:
+    def handle_event(self, bpf_collector: BPF_Collector, event: ct._CData) -> int:
         """
         Handle an event from EBPF ringbuffer.
         Every event should be tagged with a short int as the first member to
@@ -131,14 +129,16 @@ class EventHandler:
         event_type = ct.cast(event, ct.POINTER(ct.c_short)).contents.value
         event_type_name = EventType(event_type).name
         method_name = f"handle_{event_type_name}"
-        method = getattr(self, method_name)
+        method: Callable[[BPF_Collector, ct._CData], int] = getattr(self, method_name)
 
         if method:
             return method(bpf_collector, event)
 
-        return None
+        return 0
 
-    def handle_ExecutorStart(self, bpf_collector, event) -> int:
+    def handle_ExecutorStart(
+        self, bpf_collector: BPF_Collector, event: ct._CData
+    ) -> int:
         """
         Handle ExecutorStart event. This event is produced by an uprobe on
         standard_ExecutorStart. See executorstart_enter in program.c.
@@ -155,7 +155,9 @@ class EventHandler:
             self.query_cache[key].update(bpf_collector.metadata, event)
         return 0
 
-    def handle_ExecutorFinish(self, bpf_collector, event) -> int:
+    def handle_ExecutorFinish(
+        self, bpf_collector: BPF_Collector, event: ct._CData
+    ) -> int:
         """
         Handle ExecutorFinish event.
         """
@@ -167,7 +169,9 @@ class EventHandler:
             )
         return 0
 
-    def handle_DropPortalEnter(self, bpf_collector, event) -> int:
+    def handle_DropPortalEnter(
+        self, bpf_collector: BPF_Collector, event: ct._CData
+    ) -> int:
         """
         Handle DropPortalEnter event. This event is produced by a uprobe on
         DropPortal. See protaldrop_enter in program.c.
@@ -187,7 +191,10 @@ class EventHandler:
             self.query_cache[self.last_portal_key].update(bpf_collector.metadata, event)
         return 0
 
-    def handle_DropPortalReturn(self, _, event) -> int:
+    # pylint: disable=unused-argument
+    def handle_DropPortalReturn(
+        self, bpf_collector: BPF_Collector, event: ct._CData
+    ) -> int:
         """
         Handle DropPortalReturn event. This event is produced by an uretprobe on
         DropPortal. See protaldrop_return in program.c.
@@ -214,14 +221,14 @@ class BPF_Collector:
     executable.
     """
 
-    def __init__(self, pid: int, instrument_options=None):
+    def __init__(self, pid: int, instrument_options: Optional[int] = None):
         self.pid = pid
         self.process = Process(self.pid)
         self.program = self.process.exe()
         self.metadata = ProcessMetadata(self.process)
         self.instrument_options = instrument_options
         self.bpf = self.prepare_bpf()
-        self.event_handler = EventHandler()
+        self.event_handler: EventHandler = EventHandler()
         self.update_struct_defs()
         self._started = False
 
@@ -252,7 +259,7 @@ class BPF_Collector:
         )
 
     @property
-    def constant_defines(self) -> dict:
+    def constant_defines(self) -> Dict[str, int]:
         """
         Returns a list of constants to add to the ebpf program as #define
         directives.
@@ -323,7 +330,7 @@ class BPF_Collector:
 
         return globalenum
 
-    def make_struct_sizes_dict(self) -> dict:
+    def make_struct_sizes_dict(self) -> Dict[str, int]:
         """
         Create a dictionary mapping struct name to their bytesize.
 
@@ -347,7 +354,7 @@ class BPF_Collector:
                 name=self.program, fn_name=ebpf_function, addr=addr, pid=self.pid
             )
 
-    def _attach_uretprobe(self, function_name, ebpf_function):
+    def _attach_uretprobe(self, function_name: str, ebpf_function: str) -> None:
         """
         Helper to attach a uretprobe executing `ebpf_function` at every
         `function_name` location.
@@ -361,7 +368,7 @@ class BPF_Collector:
                 pid=self.pid,
             )
 
-    def start(self):
+    def start(self) -> None:
         """
         Start the ebpf collector:
          - attach uprobes/uretprobes
@@ -376,7 +383,8 @@ class BPF_Collector:
         self._started = True
         print("eBPF collector started")
 
-    def _handle_event(self, cpu, data, size):  # pylint: disable=unused-argument
+    # pylint: disable=unused-argument
+    def _handle_event(self, cpu: int, data: ct._CData, size: int) -> int:
         """
         Callback for the ring_buffer_poll. We actually dispatch this to the
         `EventHandler`
@@ -405,7 +413,7 @@ class BPF_Collector:
         print("eBPF program compiled")
         return bpf
 
-    def poll(self, timeout=-1) -> None:
+    def poll(self, timeout: int = -1) -> None:
         """
         Wrapper around ring_buffer_poll: the first time we're called, we attach
         the probes.

@@ -8,7 +8,7 @@ import sys
 from pgtracer.ebpf.collector import BPF_Collector
 
 
-def main():
+def main() -> None:
     """
     Entry point for the pgtrace_queries script.
     """
@@ -35,7 +35,10 @@ def main():
 
             for query in collector.event_handler.query_history:
                 parts = []
-                parts.append(f"{query.start_datetime.isoformat()} {query.text}")
+                start = "<unknown>"
+                if query.start_datetime is not None:
+                    start = query.start_datetime.isoformat()
+                parts.append(f"{start} {query.text}")
                 mapping = {}
                 mapping["search_path"] = query.search_path
                 mapping["runtime"] = str(query.runtime)

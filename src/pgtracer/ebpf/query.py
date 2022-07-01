@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import ctypes as ct
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from .collector import portal_data
@@ -17,9 +17,15 @@ class Query:
     A PostgreSQL Query.
     """
 
-    def __init__(self, *, startts=None, text=None, instrument=None, search_path=None):
-        self.root_node = None
-        self.node_cache = {}
+    def __init__(
+        self,
+        *,
+        startts: Optional[float] = None,
+        text: Optional[str] = None,
+        # Instrumentation is dynamically generated class, no way to check it
+        instrument: Any = None,
+        search_path: Optional[str] = None,
+    ):
         self.startts = startts
         self.text = text
         self.instrument = instrument
@@ -56,10 +62,12 @@ class Query:
         self.search_path = search_path or self.search_path
 
     @property
-    def start_datetime(self) -> datetime:
+    def start_datetime(self) -> Optional[datetime]:
         """
         Returns the creation timestamp of the portal associated to this query.
         """
+        if self.startts is None:
+            return None
         return datetime.fromtimestamp(self.startts)
 
     @property
