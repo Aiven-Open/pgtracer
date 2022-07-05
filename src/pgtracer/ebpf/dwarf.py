@@ -452,7 +452,7 @@ class Structs:
 
     def __init__(self, metadata: ProcessMetadata):
         self.metadata = metadata
-        self.cache: Dict[str, Type[Struct]]
+        self.cache: Dict[str, Type[Struct]] = {}
 
     def __getattr__(self, attrname: str) -> Type[Struct]:
         """
