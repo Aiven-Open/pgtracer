@@ -4,8 +4,38 @@ This simple script trace queries executed by a Postgres backend.
 
 import argparse
 import sys
+from datetime import timedelta
+from typing import Any, Dict
 
 from pgtracer.ebpf.collector import BPF_Collector
+from pgtracer.ebpf.dwarf import Struct
+
+
+def dump_dict(somedict: Dict[str, Any], indent: int = 0) -> str:
+    """
+    Dump a dictionary as an indented string of key / value pairs.
+    """
+    parts = []
+    tabs = "\t" * indent
+    for key, value in somedict.items():
+        if isinstance(value, Struct):
+            # Special case for timespec
+            if value.__class__.__name__ == "timespec":
+                value = timedelta(
+                    seconds=value.tv_sec.value,
+                    microseconds=value.tv_nsec.value / 1000,
+                )
+            else:
+                value = value.as_dict(include_all=True)
+        if isinstance(value, dict):
+            part = "\n" + dump_dict(value, indent + 1)
+        else:
+            if hasattr(value, "value"):
+                part = value.value
+            else:
+                part = value
+        parts.append(f"{tabs}{key}: {part}")
+    return "\n".join(parts)
 
 
 def main() -> None:
@@ -41,12 +71,12 @@ def main() -> None:
                 parts.append(f"{start} {query.text}")
                 mapping = {}
                 mapping["search_path"] = query.search_path
-                mapping["runtime"] = str(query.runtime)
-
-                for key, value in mapping.items():
-                    parts.append(f"\t{key}: {value}")
-                print("\n".join(parts))
-                print("")
+                if args.instrument > 0 and query.instrument:
+                    mapping["runtime"] = str(query.runtime)
+                    mapping["buffer_usage"] = query.instrument.bufusage
+                    mapping["wal_usage"] = query.instrument.walusage
+                print(query.text)
+                print(dump_dict(mapping, 1))
             collector.event_handler.query_history = []
         except KeyboardInterrupt:
             sys.exit(0)

@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
+    Callable,
     Dict,
     Generator,
     List,
@@ -364,26 +365,26 @@ class Struct:
     Subclasses are dynamically generated from the DWARF information.
     """
 
-    fields_defs: Dict[str, StructMemberDefinition] = {}
+    fields_defs: Dict[str, StructMemberDefinition]
     metadata: ProcessMetadata
     die: DIE
+    _fully_loaded: bool = False
 
     def __init__(self, buffer_addr: int):
         self.buffer_addr = buffer_addr
         self.members: Dict[str, Union[_CData, Struct]] = {}
 
+    def __init_subclass__(cls) -> None:
+        super().__init_subclass__()
+        cls.fields_defs = {}
+
     @classmethod
-    def field_definition(cls, attrname: str) -> Optional[StructMemberDefinition]:
-        """
-        Returns a field definition for the given attribute.
-
-        It is lazy-loaded from the DWARF information.
-        """
-        if attrname in cls.fields_defs:
-            return cls.fields_defs[attrname]
-
+    def _load_fields(cls, filter_fn: Optional[Callable[[DIE], bool]] = None) -> None:
         for child in cls.die.iter_children():
-            if die_name(child) == attrname:
+            if filter_fn is None or filter_fn(child):
+                attrname = die_name(child)
+                if attrname is None:
+                    continue
                 offset = get_location(child)
                 typedie = child.get_DIE_from_attribute("DW_AT_type")
 
@@ -414,8 +415,26 @@ class Struct:
                     attrname, child_type, offset
                 )
 
-                return cls.fields_defs[attrname]
-        return None
+    @classmethod
+    def field_definition(cls, attrname: str) -> Optional[StructMemberDefinition]:
+        """
+        Returns a field definition for the given attribute.
+
+        It is lazy-loaded from the DWARF information.
+        """
+        if attrname in cls.fields_defs:
+            return cls.fields_defs[attrname]
+        cls._load_fields(lambda die: die_name(die) == attrname)
+        return cls.fields_defs[attrname]
+
+    @classmethod
+    def load_all_definitions(cls) -> None:
+        """
+        Load all field defintions for the struct.
+        """
+        if cls._fully_loaded:
+            return
+        cls._load_fields()
 
     def __getattr__(self, attrname: str) -> Any:
         """
@@ -434,6 +453,21 @@ class Struct:
         self.members[attrname] = field.extract_from_struct(self.buffer_addr)
 
         return self.members[attrname]
+
+    def as_dict(self, include_all: bool = False) -> Dict[str, Any]:
+        """
+        Returns the struct content as a dict.
+        If include_all is True, load all field definitions from the underlying
+        DWARFInfo before. Otherwise, only fields which have already been
+        accessed in any instance of this Struct class will be dumped.
+        """
+        if include_all:
+            self.load_all_definitions()
+        values = {}
+        for attrname in self.fields_defs.keys():
+            value = getattr(self, attrname)
+            values[attrname] = value
+        return values
 
     @classmethod
     def size(cls) -> int:
