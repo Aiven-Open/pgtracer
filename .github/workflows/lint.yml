@@ -39,7 +39,7 @@ jobs:
         run: pylint --rcfile .pylintrc src/ || pylint-exit $? -efail
 
       - id: mypy
-        run: python -m mypy --script src/
+        run: python -m mypy --strict src/
 
       - id: validate-style
         run: |
