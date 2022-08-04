@@ -224,8 +224,10 @@ class BPF_Collector:
     def __init__(self, pid: int, instrument_options: Optional[int] = None):
         self.pid = pid
         self.process = Process(self.pid)
-        self.program = self.process.exe()
-        self.metadata = ProcessMetadata(self.process)
+        self.program = self.process.exe().encode("utf8")
+        # FIXME: make this configurable
+        cache_dir = Path("~/.cache").expanduser() / "pgtracer"
+        self.metadata = ProcessMetadata(self.process, cache_dir=cache_dir)
         self.instrument_options = instrument_options
         self.bpf = self.prepare_bpf()
         self.event_handler: EventHandler = EventHandler()
@@ -351,7 +353,10 @@ class BPF_Collector:
         """
         for addr in self.metadata.function_addresses(function_name):
             self.bpf.attach_uprobe(
-                name=self.program, fn_name=ebpf_function, addr=addr, pid=self.pid
+                name=self.program,
+                fn_name=ebpf_function.encode("utf8"),
+                addr=addr,
+                pid=self.pid,
             )
 
     def _attach_uretprobe(self, function_name: str, ebpf_function: str) -> None:
@@ -363,7 +368,7 @@ class BPF_Collector:
         for addr in self.metadata.function_addresses(function_name):
             self.bpf.attach_uretprobe(
                 name=self.program,
-                fn_name=ebpf_function,
+                fn_name=ebpf_function.encode("utf8"),
                 addr=addr,
                 pid=self.pid,
             )
@@ -375,7 +380,7 @@ class BPF_Collector:
          - open the ringbuffer.
         """
         print("Starting eBPF collector...")
-        self.bpf["event_ring"].open_ring_buffer(self._handle_event)
+        self.bpf[b"event_ring"].open_ring_buffer(self._handle_event)
         self._attach_uprobe("PortalDrop", "portaldrop_enter")
         self._attach_uretprobe("PortalDrop", "portaldrop_return")
         self._attach_uprobe("standard_ExecutorStart", "executorstart_enter")
@@ -396,7 +401,6 @@ class BPF_Collector:
         Generate the eBPF program, both from static code and dynamically
         generated defines and enums.
         """
-        print("Generating eBPF source program...")
         buf = defines_dict_to_c(self.constant_defines)
         buf += defines_dict_to_c(self.struct_offsets_defines)
         buf += defines_dict_to_c(self.make_struct_sizes_dict())
@@ -408,9 +412,7 @@ class BPF_Collector:
         # Suppress some common warnings depending on bcc / kernel combinations
         cflags.append("-Wno-macro-redefined")
         cflags.append("-Wno-ignored-attributes")
-        print("Compiling eBPF program...")
-        bpf = BPF(text=buf, cflags=cflags, debug=0)
-        print("eBPF program compiled")
+        bpf = BPF(text=buf.encode("utf8"), cflags=cflags, debug=0)
         return bpf
 
     def poll(self, timeout: int = -1) -> None:

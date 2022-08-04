@@ -66,6 +66,8 @@ def extract_buildid(elffile: ELFFile) -> Optional[str]:
     Extract the build-id from an ELF file.
     """
     buildid_section = elffile.get_section_by_name(".note.gnu.build-id")
+    if buildid_section is None:
+        return None
     for note in buildid_section.iter_notes():
         if note["n_type"] == "NT_GNU_BUILD_ID":
             n_desc: str = note["n_desc"]
@@ -440,6 +442,8 @@ class Struct:
         """
         Load the value of attribute attrname from the payload associated to
         this struct, parsing it from the field definition.
+
+        If called on the class itself, returns the definitions
         """
         if attrname in self.members:
             return self.members[attrname]
@@ -524,7 +528,8 @@ class ProcessMetadata:
     from memory maps) with DWARF information.
     """
 
-    def __init__(self, process: Process):
+    def __init__(self, process: Process, cache_dir: Optional[Path] = None):
+        self.cache_dir = cache_dir
         self.program = Path(process.exe())
         elffile = ELFFile(open(self.program, "rb"))
         self.buildid = extract_buildid(elffile)
@@ -549,19 +554,45 @@ class ProcessMetadata:
         self.enums = Enums(self)
         self.structs = Structs(self)
 
+    @property
+    def cache_path(self) -> Optional[Path]:
+        """
+        Returns the cache_path for this file.
+        """
+        if self.buildid is None or self.cache_dir is None:
+            return None
+        if not self.cache_dir.exists():
+            self.cache_dir.mkdir()
+        return self.cache_dir / (self.buildid + ".pgtraceridx")
+
+    def _load_naive_index(self) -> Optional[Dict[str, Dict[str, Set[Tuple[int, int]]]]]:
+        """
+        Load a naive index previously stored on disk.
+        """
+        if self.cache_path is not None and self.cache_path.exists():
+            print(f"Loading naive index from {str(self.cache_path)}")
+            with self.cache_path.open() as fileidx:
+                filecache: Dict[str, Dict[str, Set[Tuple[int, int]]]]
+                filecache = json.load(fileidx)
+                return filecache
+        return None
+
+    def _dump_naive_index(self) -> None:
+        """
+        Store a naive index on disk.
+        """
+        if self.cache_path is not None:
+            with self.cache_path.open("w") as fileidx:
+                json.dump(self.naive_index, fileidx, cls=CacheJSONEncoder)
+
     def _load_or_build_naive_index(self) -> None:
-        if self.buildid is None:
+        """
+        Load a naive index from disk, building if it doesn't exists.
+        """
+        naive_index = self._load_naive_index()
+        if naive_index is not None:
+            self.naive_index = naive_index
             return
-        build_index_dir = Path("~/.cache").expanduser() / "pgtracer"
-        if not build_index_dir.exists():
-            build_index_dir.mkdir()
-        build_index_path = build_index_dir / (self.buildid + ".pgtraceridx")
-        if build_index_path.exists():
-            print(f"Loading naive index from {str(build_index_path)}")
-            with build_index_path.open() as fileidx:
-                self.naive_index = json.load(fileidx)
-                return
-        print("Building a naive index...")
         for cu in self.dwarf_info.iter_CUs():
             for die in cu.iter_DIEs():
                 name = die_name(die)
@@ -574,9 +605,7 @@ class ProcessMetadata:
                         "DW_TAG_inlined_subroutine",
                     ):
                         self.naive_index[die.tag][name].add((die.offset, cu.cu_offset))
-        with build_index_path.open("w") as fileidx:
-            json.dump(self.naive_index, fileidx, cls=CacheJSONEncoder)
-        print("Naive index built")
+        self._dump_naive_index()
 
     def search_symbol(self, tag: str, name: str) -> Generator[DIE, None, None]:
         """
