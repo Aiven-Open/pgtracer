@@ -55,3 +55,4 @@ jobs:
           fail_ci_if_error: true
           files: ./coverage.xml
           verbose: true
+          name: codecov-umbrella
