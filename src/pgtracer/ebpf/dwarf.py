@@ -76,7 +76,7 @@ def extract_buildid(elffile: ELFFile) -> Optional[str]:
 
 
 def find_debuginfo(
-    elf_file: ELFFile, buildid: Optional[str] = None
+    elf_file: ELFFile, root: Path = Path("/"), buildid: Optional[str] = None
 ) -> Optional[ELFFile]:
     """
     Find the debug information for a given program.
@@ -88,13 +88,13 @@ def find_debuginfo(
     if dwarf_info.has_debug_info:
         return elf_file
 
-    debug_dir = Path("/usr/lib/debug")
+    debug_dir = root / Path("usr/lib/debug")
     # Try to locate it using build-id
     if buildid:
         prefix, rest = buildid[:2], buildid[2:]
         debug_file = debug_dir / ".build-id" / prefix / (rest + ".debug")
         if debug_file.exists():
-            return ELFFile(debug_file.open("rb"))
+            return ELFFile.load_from_path(bytes(debug_file))
     # Ok, try to locate it using debuglink then.
     gnu_debug_link_section = elf_file.get_section_by_name(".gnu_debuglink")
     if gnu_debug_link_section is not None:
@@ -108,7 +108,7 @@ def find_debuginfo(
         program_path = program_path.relative_to(program_path.anchor)
         debug_file = debug_dir / program_path
         if debug_file.exists():
-            return ELFFile(debug_file.open("rb"))
+            return ELFFile.load_from_path(bytes(debug_file))
     return None
 
 
@@ -530,18 +530,21 @@ class ProcessMetadata:
 
     def __init__(self, process: Process, cache_dir: Optional[Path] = None):
         self.cache_dir = cache_dir
-        self.program = Path(process.exe())
-        elffile = ELFFile(open(self.program, "rb"))
+        self.root = Path(f"/proc/{process.pid}/root")
+        program_raw = Path(process.exe())
+        self.program = self.root / program_raw.relative_to("/")
+        elffile = ELFFile.load_from_path(bytes(self.program))
         self.buildid = extract_buildid(elffile)
-        elffile = find_debuginfo(elffile, self.buildid)
+        elffile = find_debuginfo(elffile, root=self.root, buildid=self.buildid)
         if elffile is None:
             raise Exception(f"Couldn't find debug info for {self.program}")
         self.elffile = elffile
         self.dwarf_info = self.elffile.get_dwarf_info()
-        self.base_addr = find_offset(process, str(self.program))[0]
+        self.base_addr = find_offset(process, str(program_raw))[0]
         self.stack_top = find_offset(process, "[stack]")[1]
         gdb_index_section = self.elffile.get_section_by_name(".gdb_index")
         self.gdb_index: Optional[GDBIndex] = None
+        self.all_cus = list(self.dwarf_info.iter_CUs())
         self.naive_index: Dict[str, Dict[str, Set[Tuple[int, int]]]] = defaultdict(
             lambda: defaultdict(set)
         )
@@ -636,12 +639,11 @@ class ProcessMetadata:
         """
         assert self.gdb_index is not None
         cu_vector = self.gdb_index.find_symbol(name)
-        all_cus = list(self.dwarf_info.iter_CUs())
         # The cu_vector consist of a cuidx identify which compile unit the DIE
         # is in, and the DIE type. We don't really care about the type here
         # since we check it more precisely in die_match.
         for (cuidx, _type) in cu_vector:
-            cu = all_cus[cuidx]
+            cu = self.all_cus[cuidx]
 
             for die in cu.iter_DIEs():
                 if die_match(die, tag, name):

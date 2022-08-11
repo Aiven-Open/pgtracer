@@ -3,6 +3,7 @@ This module tests some utilities from the dwarf module.
 """
 
 import ctypes as ct
+import os
 from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
@@ -25,6 +26,13 @@ class MockProcess:
         Returns a constant binary string.
         """
         return self.binary
+
+    @property
+    def pid(self):
+        """
+        Returns self pid. We only need an existing pid...
+        """
+        return os.getpid()
 
 
 class TestProcessMetadata(TestCase):

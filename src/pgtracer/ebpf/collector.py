@@ -9,6 +9,7 @@ The BPFCollector works by combining two things:
 from __future__ import annotations
 
 import ctypes as ct
+import os
 from enum import IntEnum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type
@@ -224,10 +225,13 @@ class BPF_Collector:
     def __init__(self, pid: int, instrument_options: Optional[int] = None):
         self.pid = pid
         self.process = Process(self.pid)
-        self.program = self.process.exe().encode("utf8")
+        # Since we shouldn't assume it's relative to our own root, it could be
+        # in a container.
+        program_str = f"/proc/{self.pid}/root/{self.process.exe()}"
         # FIXME: make this configurable
         cache_dir = Path("~/.cache").expanduser() / "pgtracer"
         self.metadata = ProcessMetadata(self.process, cache_dir=cache_dir)
+        self.program = str(self.metadata.program).encode("utf8")
         self.instrument_options = instrument_options
         self.bpf = self.prepare_bpf()
         self.event_handler: EventHandler = EventHandler()
