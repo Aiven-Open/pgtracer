@@ -226,6 +226,10 @@ class GDBIndex:
 
         return cu_vector
 
+    def cu_offset_by_idx(self, cu_idx: int) -> int:
+        self.stream.seek(self.offset + self.header.cu_offset + cu_idx * 16)
+        return struct.unpack("<Q", self.stream.read(8))[0]
+
     def _read_cu_vector_at(self, cv_off: int) -> List[Tuple[int, int]]:
         """
         Read a cu_vector at a specific offset.
@@ -519,6 +523,9 @@ class CacheJSONEncoder(json.JSONEncoder):
         return super().default(o)
 
 
+GDB_INDEX_TYPES_MAPPING = {"DW_TAG_subprogram": 3, "DW_TAG_structure_type": 1}
+
+
 class ProcessMetadata:
     # pylint: disable=invalid-name
     """
@@ -544,14 +551,20 @@ class ProcessMetadata:
         self.stack_top = find_offset(process, "[stack]")[1]
         gdb_index_section = self.elffile.get_section_by_name(".gdb_index")
         self.gdb_index: Optional[GDBIndex] = None
-        self.all_cus = list(self.dwarf_info.iter_CUs())
         self.naive_index: Dict[str, Dict[str, Set[Tuple[int, int]]]] = defaultdict(
             lambda: defaultdict(set)
         )
         if gdb_index_section is not None:
             self.gdb_index = GDBIndex(gdb_index_section, self.dwarf_info)
+            # We still build a naive index, but lazily instead of parsing
+            # everything. This helps subsequent invocations...
+            naive_index = self._load_naive_index()
+            if naive_index is not None:
+                self._merge_naive_index(naive_index)
         else:
-            print("WARNING: not using a gdb index... Things can be really slow.")
+            print(
+                "WARNING: not using a gdb index... We will need to build a full index first"
+            )
             self._load_or_build_naive_index()
 
         self.enums = Enums(self)
@@ -588,13 +601,21 @@ class ProcessMetadata:
             with self.cache_path.open("w") as fileidx:
                 json.dump(self.naive_index, fileidx, cls=CacheJSONEncoder)
 
+    def _merge_naive_index(self, naive_index):
+        for tag, symbols in naive_index.items():
+            tagdict = self.naive_index[tag]
+            for symbol, tuples in symbols.items():
+                symbolset = tagdict[symbol]
+                for offsets in tuples:
+                    symbolset.add(tuple(offsets))
+
     def _load_or_build_naive_index(self) -> None:
         """
         Load a naive index from disk, building if it doesn't exists.
         """
         naive_index = self._load_naive_index()
         if naive_index is not None:
-            self.naive_index = naive_index
+            self._merge_naive_index(naive_index)
             return
         for cu in self.dwarf_info.iter_CUs():
             for die in cu.iter_DIEs():
