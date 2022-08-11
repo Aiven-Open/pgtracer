@@ -1,0 +1,49 @@
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - '**'
+  pull_request:
+
+jobs:
+
+  tests:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        # only use one version for the lint step
+        python-version: [3.9]
+        postgresql_version: [11, 12, 13, 14]
+
+    steps:
+
+      - id: checkout
+        uses: actions/checkout@v2
+        with:
+          # Do not persist the token during execution of this job.
+          persist-credentials: false
+
+      - id: dependencies
+        run: |
+          # Must be installed via the system
+          sudo apt update
+          sudo apt install curl ca-certificates gnupg
+          sudo apt install python3-bpfcc python3-pip
+          curl https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/apt.postgresql.org.gpg >/dev/null
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          sudo apt update
+          sudo apt install postgresql-${{matrix.postgresql_version}} postgresql-${{matrix.postgresql_version}}-dbgsym
+          sudo pip install setuptools toml
+
+          # Install requirements from pyproject.toml
+          python -c 'import toml; open("requirements.txt.tmp", "w").write("\n".join(toml.load(open("pyproject.toml"))["project"]["dependencies"]) + "\n")'
+          # Install lint requirements
+          python -c 'import toml; open("requirements.txt.tmp", "a").write("\n".join(toml.load(open("pyproject.toml"))["project"]["optional-dependencies"]["lint"]) + "\n")'
+          sudo pip install -r requirements.txt.tmp
+          python -c "import bcc; print(bcc.__file__)"
+
+      - id: tests
+        run: |
+          sudo PYTHONPATH=$(pwd)/src pytest --postgresql-exec /usr/lib/postgresql/${{matrix.postgresql_version}}/bin/pg_ctl

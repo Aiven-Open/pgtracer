@@ -24,11 +24,14 @@ pgtrace_queries = "pgtracer.scripts.pgtrace_queries:main"
 
 [project.optional-dependencies]
 lint = [
-  'pylint',
-  'mypy',
-  'isort',
   'black',
-  'pylint-exit'
+  'isort',
+  'mypy',
+  'psycopg',
+  'pylint',
+  'pylint-exit',
+  'pytest',
+  'pytest-postgresql',
 ]
 
 [tool.isort]

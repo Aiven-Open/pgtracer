@@ -68,7 +68,7 @@ class Query:
         """
         if self.startts is None:
             return None
-        return datetime.fromtimestamp(self.startts)
+        return datetime.fromtimestamp(self.startts / 1000000)
 
     @property
     def runtime(self) -> Optional[timedelta]:

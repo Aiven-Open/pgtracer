@@ -9,7 +9,9 @@
 
 static u64 pgts_to_unixts(u64 pgts)
 {
-    return (pgts / 1000000) + EPOCH_OFFSET;
+	ulong secs = (ulong) pgts / 1000000;
+	uint microsecs = (uint) pgts % 1000000;
+	return (secs + EPOCH_OFFSET) * 1000000 + microsecs;
 }
 
 static inline void capture_stack(struct pt_regs *ctx, struct stack_data_t *stack_data)
@@ -45,16 +47,16 @@ static inline void capture_stack(struct pt_regs *ctx, struct stack_data_t *stack
 // Handle code related to the portal information capture
 static inline struct portal_key_t get_portal_key(void * portal)
 {
-    struct portal_key_t ret;
-    u64 creation_time;
-    __builtin_memset(&ret, 0, sizeof(ret));
-    ret.pid = bpf_get_current_pid_tgid();
-    ret.creation_time = 0;
-    bpf_probe_read_user(&creation_time,
+	struct portal_key_t ret;
+	u64 creation_time;
+	__builtin_memset(&ret, 0, sizeof(ret));
+	ret.pid = bpf_get_current_pid_tgid();
+	ret.creation_time = 0;
+	bpf_probe_read_user(&creation_time,
 						sizeof(u64),
 						OffsetFrom(portal, PortalData, creation_time));
-    ret.creation_time = pgts_to_unixts(creation_time);
-    return ret;
+	ret.creation_time = pgts_to_unixts(creation_time);
+	return ret;
 }
 
 static inline void fill_portal_data(void * queryDesc, struct portal_data_t* event)
