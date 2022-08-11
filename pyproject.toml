@@ -31,6 +31,7 @@ lint = [
   'pylint',
   'pylint-exit',
   'pytest',
+  'pytest-coverage',
   'pytest-postgresql',
 ]
 
