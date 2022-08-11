@@ -14,9 +14,9 @@ jobs:
     strategy:
       matrix:
         # only use one version for the lint step
-        python-version: [3.9]
         postgresql_version: [11, 12, 13, 14]
-
+    env:
+      PGVERSION: ${{ matrix.postgresql_version }}
     steps:
 
       - id: checkout
@@ -46,4 +46,12 @@ jobs:
 
       - id: tests
         run: |
-          sudo PYTHONPATH=$(pwd)/src pytest --postgresql-exec /usr/lib/postgresql/${{matrix.postgresql_version}}/bin/pg_ctl
+          sudo PYTHONPATH=$(pwd)/src pytest --postgresql-exec /usr/lib/postgresql/${{matrix.postgresql_version}}/bin/pg_ctl --cov --cov-report=xml
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          env_vars: PGVERSION
+          fail_ci_if_error: true
+          files: ./coverage.xml
+          verbose: true
