@@ -227,8 +227,12 @@ class GDBIndex:
         return cu_vector
 
     def cu_offset_by_idx(self, cu_idx: int) -> int:
+        """
+        Returns a cu offset from the .gdb_index section cu_offsets list.
+        """
         self.stream.seek(self.offset + self.header.cu_offset + cu_idx * 16)
-        return struct.unpack("<Q", self.stream.read(8))[0]
+        cu_offset: int = struct.unpack("<Q", self.stream.read(8))[0]
+        return cu_offset
 
     def _read_cu_vector_at(self, cv_off: int) -> List[Tuple[int, int]]:
         """
@@ -554,6 +558,7 @@ class ProcessMetadata:
         self.naive_index: Dict[str, Dict[str, Set[Tuple[int, int]]]] = defaultdict(
             lambda: defaultdict(set)
         )
+        self.symtab = self.elffile.get_section_by_name(".symtab")
         if gdb_index_section is not None:
             self.gdb_index = GDBIndex(gdb_index_section, self.dwarf_info)
             # We still build a naive index, but lazily instead of parsing
@@ -601,13 +606,15 @@ class ProcessMetadata:
             with self.cache_path.open("w") as fileidx:
                 json.dump(self.naive_index, fileidx, cls=CacheJSONEncoder)
 
-    def _merge_naive_index(self, naive_index):
+    def _merge_naive_index(
+        self, naive_index: Dict[str, Dict[str, Set[Tuple[int, int]]]]
+    ) -> None:
         for tag, symbols in naive_index.items():
             tagdict = self.naive_index[tag]
             for symbol, tuples in symbols.items():
                 symbolset = tagdict[symbol]
-                for offsets in tuples:
-                    symbolset.add(tuple(offsets))
+                for die_offset, cu_offset in tuples:
+                    symbolset.add((die_offset, cu_offset))
 
     def _load_or_build_naive_index(self) -> None:
         """
@@ -642,42 +649,61 @@ class ProcessMetadata:
             return self._naive_die_search(tag, name)
         return self._gdbindex_die_search(tag, name)
 
+    def _die_by_offsets(self, offsets: Tuple[int, int]) -> DIE:
+        cu = self.dwarf_info.get_CU_at(offsets[1])
+        die = cu.get_DIE_from_refaddr(offsets[0])
+        return die
+
     def _naive_die_search(self, tag: str, name: str) -> Generator[DIE, None, None]:
         """
         Implementation of search_symbol when we don't have any index.
         This is VERY slow as we need to parse every single DIE.
         """
         tag_dict = self.naive_index.get(tag, {})
-        for offset, cuoffset in tag_dict.get(name, []):
-            cu = self.dwarf_info.get_CU_at(cuoffset)
-            die = cu.get_DIE_from_refaddr(offset)
-            if die_match(die, tag, name):
-                yield die
+        for offsets in tag_dict.get(name, []):
+            die = self._die_by_offsets(offsets)
+            yield die
 
     def _gdbindex_die_search(self, tag: str, name: str) -> Generator[DIE, None, None]:
         """
         Implementation of search_symbol when we do have .gdb_index.
         """
+        # We first try to see if we cached the result.
+        offsets = self.naive_index.get(tag, {}).get(name, None)
+        if offsets is not None:
+            for off in offsets:
+                die = self._die_by_offsets(off)
+                yield die
+            return
         assert self.gdb_index is not None
         cu_vector = self.gdb_index.find_symbol(name)
         # The cu_vector consist of a cuidx identify which compile unit the DIE
         # is in, and the DIE type. We don't really care about the type here
         # since we check it more precisely in die_match.
+        gdb_type = GDB_INDEX_TYPES_MAPPING.get(tag)
+        matching_dies_offsets = set()
+        matching_dies_list = []
         for (cuidx, _type) in cu_vector:
-            cu = self.all_cus[cuidx]
+            if gdb_type is not None and gdb_type != _type:
+                continue
+            cu_offset = self.gdb_index.cu_offset_by_idx(cuidx)
+            cu = self.dwarf_info.get_CU_at(cu_offset)
 
             for die in cu.iter_DIEs():
                 if die_match(die, tag, name):
-                    yield die
+                    matching_dies_offsets.add((die.offset, die.cu.cu_offset))
+                    matching_dies_list.append(die)
+        self.naive_index[tag][name] = matching_dies_offsets
+        self._dump_naive_index()
+        for die in matching_dies_list:
+            yield die
 
     def global_variable(self, variable_name: str) -> Optional[int]:
         """
         Returns the absolute address associated to a global variable.
         """
         # First, try to look it up in the symbol table
-        symtab = self.elffile.get_section_by_name(".symtab")
-        symbol = symtab.get_symbol_by_name(variable_name)
-
+        symbol = self.symtab.get_symbol_by_name(variable_name)
         if symbol:
             return int(symbol[0]["st_value"]) + self.base_addr
         # If it fails, fallback to DWARF
