@@ -7,6 +7,8 @@ import ctypes as ct
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Optional
 
+from ..utils import timespec_to_timedelta
+
 if TYPE_CHECKING:
     from .collector import portal_data
     from .dwarf import ProcessMetadata
@@ -76,8 +78,5 @@ class Query:
         Returns the query's top-node total runtime.
         """
         if self.instrument:
-            return timedelta(
-                seconds=self.instrument.counter.tv_sec.value,
-                microseconds=self.instrument.counter.tv_nsec.value / 1000,
-            )
+            return timespec_to_timedelta(self.instrument.counter)
         return None
