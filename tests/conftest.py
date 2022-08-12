@@ -3,6 +3,7 @@ Pytest fixtures.
 """
 
 import os
+import re
 import subprocess
 from pathlib import Path
 from pwd import getpwnam
@@ -57,6 +58,9 @@ def nonroot_postgres(request: FixtureRequest) -> Iterator[PostgreSQLExecutor]:
             startparams="",
             datadir=str(datadir),
         )
+        postgresql_executor.VERSION_RE = re.compile(
+            ".* (?P<version>\\d+((\\.\\d+)|beta\\d|dev))"
+        )
         pid = os.fork()
         if pid == 0:
             try:
@@ -66,10 +70,14 @@ def nonroot_postgres(request: FixtureRequest) -> Iterator[PostgreSQLExecutor]:
                 unix_socket_dir.mkdir()
                 postgresql_executor.start()
                 postgresql_executor.wait_for_postgres()
+            except Exception as e:
+                os._exit(1)
             finally:
                 os._exit(0)  # pylint: disable=protected-access
         else:
-            os.waitpid(pid, 0)
+            pid, rv = os.waitpid(pid, 0)
+            if rv != 0:
+                raise Exception("Could not start postgresql")
             try:
                 yield postgresql_executor
             finally:
