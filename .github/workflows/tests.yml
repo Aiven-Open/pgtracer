@@ -11,10 +11,18 @@ jobs:
 
   tests:
     runs-on: ubuntu-22.04
+    # We don't fail on dev versions, as those are snapshots
+    continue-on-error: ${{ matrix.experimental }}
     strategy:
+      fail-fast: true
       matrix:
         # only use one version for the lint step
-        postgresql_version: [11, 12, 13, 14]
+        postgresql_version: [11, 12, 13, 14, 15]
+        experimental: [false]
+        # Define the current dev version to be experimental
+        include:
+          - postgresql_version: 16
+            experimental: true
     env:
       PGVERSION: ${{ matrix.postgresql_version }}
     steps:
@@ -32,7 +40,8 @@ jobs:
           sudo apt install curl ca-certificates gnupg
           sudo apt install python3-bpfcc python3-pip
           curl https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/apt.postgresql.org.gpg >/dev/null
-          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main 15" > /etc/apt/sources.list.d/pgdg.list'
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg-snapshot main 16" >> /etc/apt/sources.list.d/pgdg.list'
           sudo apt update
           sudo apt install postgresql-${{matrix.postgresql_version}} postgresql-${{matrix.postgresql_version}}-dbgsym
           sudo pip install setuptools toml
