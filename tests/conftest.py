@@ -71,6 +71,7 @@ def nonroot_postgres(request: FixtureRequest) -> Iterator[PostgreSQLExecutor]:
                 postgresql_executor.start()
                 postgresql_executor.wait_for_postgres()
             except Exception as e:
+                print(e)
                 os._exit(1)
             finally:
                 os._exit(0)  # pylint: disable=protected-access

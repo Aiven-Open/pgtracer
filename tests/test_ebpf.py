@@ -1,7 +1,9 @@
 """
 This module acts as a general health check for the eBPF collector.
 """
-import datetime
+from datetime import timedelta
+
+from pgtracer.utils import timespec_to_timedelta as tstimedelta
 
 
 def test_basic_ebf_collector(bpfcollector, connection):
@@ -17,7 +19,7 @@ def test_basic_ebf_collector(bpfcollector, connection):
     assert query.text == "SELECT now()"
     assert query.search_path == '"$user", public'
     assert query.start_datetime.replace(microsecond=0) == querystart
-    assert query.runtime == datetime.timedelta(0)
+    assert query.runtime == timedelta(0)
     assert query.instrument.need_timer.value is False
     assert query.instrument.need_bufusage.value is False
 
@@ -26,6 +28,7 @@ def test_instrumentation(bpfcollector_instrumented, connection):
     """
     Test that turning instrumentation on works as expected.
     """
+    connection.execute("SET track_io_timing = on")
     with connection.execute("SELECT * FROM pg_class") as cur:
         cur.fetchall()
     bpfcollector_instrumented.poll(10)
@@ -33,14 +36,16 @@ def test_instrumentation(bpfcollector_instrumented, connection):
     query = bpfcollector_instrumented.event_handler.query_history[0]
     assert query.instrument.need_timer.value is True
     assert query.instrument.need_bufusage.value is True
-    assert query.runtime > datetime.timedelta(0)
+    assert query.runtime > timedelta(0)
     assert query.instrument.bufusage.shared_blks_hit.value > 0
     assert query.instrument.bufusage.shared_blks_read.value >= 0
     assert query.instrument.bufusage.temp_blks_read.value == 0
     assert query.instrument.bufusage.temp_blks_written.value == 0
     if connection.info.server_version >= 150000:
-        assert query.instrument.bufusage.temp_blk_read_time.value == 0
-        assert query.instrument.bufusage.temp_blk_write_time.value == 0
+        assert tstimedelta(query.instrument.bufusage.temp_blk_read_time) == timedelta(0)
+        assert tstimedelta(query.instrument.bufusage.temp_blk_write_time) == timedelta(
+            0
+        )
 
     # Generate some temp files for fun
     bpfcollector_instrumented.event_handler.query_history = []
@@ -53,5 +58,5 @@ def test_instrumentation(bpfcollector_instrumented, connection):
     assert query.instrument.bufusage.temp_blks_read.value > 0
     assert query.instrument.bufusage.temp_blks_written.value > 0
     if connection.info.server_version >= 150000:
-        assert query.instrument.bufusage.temp_blk_read_time.value > 0
-        assert query.instrument.bufusage.temp_blk_write_time.value > 0
+        assert tstimedelta(query.instrument.bufusage.temp_blk_read_time) > timedelta(0)
+        assert tstimedelta(query.instrument.bufusage.temp_blk_write_time) > timedelta(0)
