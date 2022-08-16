@@ -16,6 +16,7 @@ import pytest
 from pytest import FixtureRequest
 from pytest_postgresql.config import get_config
 from pytest_postgresql.executor import PostgreSQLExecutor
+from pytest_postgresql.executor_noop import NoopExecutor
 
 from pgtracer.ebpf.collector import BPF_Collector
 
@@ -30,6 +31,15 @@ def nonroot_postgres(request: FixtureRequest) -> Iterator[PostgreSQLExecutor]:
     """
 
     config = get_config(request)
+
+    # If we have a host, use that instead of creating a new instance.
+    if request.config.getoption("postgresql_host"):
+        postgresql_executor = NoopExecutor(
+            config.get("host"), 5432, "postgres", {}, "postgres"
+        )
+        postgresql_executor.unixsocketdir = None
+        yield postgresql_executor
+        return
 
     postgresql_ctl = config["exec"]
 
