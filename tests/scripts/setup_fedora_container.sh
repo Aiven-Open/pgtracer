@@ -33,6 +33,7 @@ dnf -y --releasever=36 --best \
   install \
   dhcp-client dnf fedora-release glibc glibc-langpack-en glibc-langpack-de \
   iputils less ncurses passwd systemd \
+  kernel-devel \
   systemd-networkd systemd-resolved util-linux vim-default-editor \
   postgresql-server dnf-utils dnf-plugins-core \
   python-bcc python-pip
@@ -42,6 +43,10 @@ cp /etc/resolv.conf /var/lib/machines/fedora/etc/resolve.conf
 
 systemd-nspawn -D /var/lib/machines/fedora/ /usr/bin/dnf --best -y --releasever=36 install postgresql-server
 systemd-nspawn -D /var/lib/machines/fedora/ /usr/bin/dnf -y --releasever=36 debuginfo-install postgresql-server
+
+systemd-nspawn -D /var/lib/machines/fedora/ /usr/bin/pip install toml setuptools
+cp -r ./ /var/lib/machines/fedora/root/pgtracer/
+systemd-nspawn -D /var/lib/machines/fedora/ /usr/bin/pip install -r /root/pgtracer/requirements.txt.tmp
 
 # Set a dummy password for the root user
 systemd-nspawn --console=pipe -D /var/lib/machines/fedora/ passwd root --stdin << EOF
@@ -59,6 +64,9 @@ systemd-run --machine fedora --pipe --wait /usr/bin/systemctl enable postgresql 
 systemd-run --machine fedora --pipe --wait /usr/sbin/ip link set up host0
 systemd-run --machine fedora --pipe --wait /usr/sbin/ip addr add 172.16.0.1/30 dev host0
 systemd-run --machine fedora --pipe --wait /usr/sbin/ip route add default dev host0
+
+# Let's give the container access to the kernel's modules
+cp -rv /lib/modules/$(uname -r) /var/lib/machines/fedora/lib/modules/
 
 # Ok, now we need to assign a static IP address
 ip link   set up ve-fedora
