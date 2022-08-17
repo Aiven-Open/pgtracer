@@ -30,6 +30,7 @@ from typing import (
     Union,
 )
 
+from elftools.common.exceptions import DWARFError
 from elftools.common.utils import struct_parse
 from elftools.construct import Container
 from elftools.construct import Struct as ConStruct
@@ -650,7 +651,15 @@ class ProcessMetadata:
         return self._gdbindex_die_search(tag, name)
 
     def _die_by_offsets(self, offsets: Tuple[int, int]) -> DIE:
-        cu = self.dwarf_info.get_CU_at(offsets[1])
+        try:
+            cu = self.dwarf_info.get_CU_at(offsets[1])
+        except (AssertionError, DWARFError) as e:
+            # If we can't parse it directly, it may be in the supplementary
+            # object file.
+            if self.dwarf_info.supplementary_dwarfinfo:
+                cu = self.dwarf_info.supplementary_dwarfinfo.get_CU_at(offsets[1])
+            else:
+                raise e
         die = cu.get_DIE_from_refaddr(offsets[0])
         return die
 

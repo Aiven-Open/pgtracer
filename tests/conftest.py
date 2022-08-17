@@ -19,6 +19,18 @@ from pytest_postgresql.executor import PostgreSQLExecutor
 from pytest_postgresql.executor_noop import NoopExecutor
 
 from pgtracer.ebpf.collector import BPF_Collector
+from pgtracer.utils import resolve_container_pid
+
+
+def pytest_addoption(parser):
+    """
+    Add the required options to pytest.
+    """
+    parser.addoption(
+        "--container",
+        help="Set this if the backend we are testing against is "
+        "running inside a container.",
+    )
 
 
 @pytest.fixture(scope="session")
@@ -80,14 +92,14 @@ def nonroot_postgres(request: FixtureRequest) -> Iterator[PostgreSQLExecutor]:
                 unix_socket_dir.mkdir()
                 postgresql_executor.start()
                 postgresql_executor.wait_for_postgres()
-            except Exception as e:
-                print(e)
-                os._exit(1)
+            except Exception as exc:  # pylint: disable=broad-except
+                print(exc)
+                os._exit(1)  # pylint: disable=protected-access
             finally:
                 os._exit(0)  # pylint: disable=protected-access
         else:
-            pid, rv = os.waitpid(pid, 0)
-            if rv != 0:
+            pid, return_code = os.waitpid(pid, 0)
+            if return_code != 0:
                 raise Exception("Could not start postgresql")
             try:
                 yield postgresql_executor
@@ -109,34 +121,44 @@ def connection(nonroot_postgres):  # pylint: disable=redefined-outer-name
     """
     conn = psycopg.connect(
         port=nonroot_postgres.port,
-        host=nonroot_postgres.unixsocketdir,
+        host=nonroot_postgres.unixsocketdir or nonroot_postgres.host,
         user=nonroot_postgres.user,
     )
     yield conn
     conn.close()
 
 
-def make_collector(connection, **kwargs):  # pylint: disable=redefined-outer-name
+def make_collector(
+    connection, config, **kwargs
+):  # pylint: disable=redefined-outer-name
     """
     Create a collector from a connection.
     """
     backend_pid = connection.info.backend_pid
+    if config.getoption("container"):
+        # If we have a container, look into it to translate the backend_pid
+        # to the host namespace.
+        backend_pid = resolve_container_pid(config.getoption("container"), backend_pid)
     collector = BPF_Collector(pid=backend_pid, **kwargs)
     collector.start()
     return collector
 
 
 @pytest.fixture
-def bpfcollector(connection):  # pylint: disable=redefined-outer-name
+def bpfcollector(
+    request: FixtureRequest, connection
+):  # pylint: disable=redefined-outer-name
     """
     Returns a bpfcollector associated to the current connection.
     """
-    yield make_collector(connection)
+    yield make_collector(connection, request.config)
 
 
 @pytest.fixture
-def bpfcollector_instrumented(connection):  # pylint: disable=redefined-outer-name
+def bpfcollector_instrumented(
+    request: FixtureRequest, connection
+):  # pylint: disable=redefined-outer-name
     """
     Returns a bpfcollector with instrumentation turned on.
     """
-    yield make_collector(connection, instrument_options=2147483647)
+    yield make_collector(connection, request.config, instrument_options=2147483647)
