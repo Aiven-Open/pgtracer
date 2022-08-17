@@ -16,7 +16,7 @@ metalink=https://mirrors.fedoraproject.org/metalink?repo=fedora-\$releasever&arc
 enabled=1
 gpgcheck=1
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-\$releasever-\$basearch
-metadata_expire=2d
+metadata_expire=1
 skip_if_unavailable=False
 EOF
 
@@ -27,6 +27,7 @@ wget https://getfedora.org/static/fedora.gpg -O /etc/pki/rpm-gpg/RPM-GPG-KEY-fed
 
 # Install the required packages in the container
 dnf -y --releasever=36 --best \
+  --refresh \
   --setopt=install_weak_deps=False \
   --installroot=/var/lib/machines/fedora/ \
   install \
@@ -39,12 +40,8 @@ dnf -y --releasever=36 --best \
 rm /var/lib/machines/fedora/etc/resolv.conf
 cp /etc/resolv.conf /var/lib/machines/fedora/etc/resolve.conf
 
-
+systemd-nspawn -D /var/lib/machines/fedora/ /usr/bin/dnf --best -y --releasever=36 install postgresql-server
 systemd-nspawn -D /var/lib/machines/fedora/ /usr/bin/dnf -y --releasever=36 debuginfo-install postgresql-server
-
-#systemd-nspawn -D /var/lib/machines/fedora/ /usr/bin/pip install toml setuptools
-#cp -r ./ /var/lib/machines/fedora/root/pgtracer/
-#systemd-nspawn -D /var/lib/machines/fedora/ /usr/bin/pip install -r /root/pgtracer/requirements.txt.tmp
 
 # Set a dummy password for the root user
 systemd-nspawn --console=pipe -D /var/lib/machines/fedora/ passwd root --stdin << EOF
