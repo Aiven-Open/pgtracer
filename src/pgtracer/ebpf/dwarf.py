@@ -104,7 +104,7 @@ def find_debuginfo(
             if char == 0x00:
                 break
             debuglink.append(char)
-        program_dir = Path(elf_file.stream.name).parent
+        program_dir = Path(elf_file.stream.name.decode("utf8")).parent
         program_path = program_dir / debuglink.decode("utf8")
         program_path = program_path.relative_to(program_path.anchor)
         debug_file = debug_dir / program_path
