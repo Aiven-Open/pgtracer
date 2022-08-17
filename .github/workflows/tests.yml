@@ -81,19 +81,21 @@ jobs:
       - id: dependencies
         run: |
           sudo apt install dnf systemd-container
+          sudo apt install postgresql-client
           sudo ./tests/scripts/setup_fedora_container.sh
           sudo apt install curl ca-certificates gnupg
-          sudo apt install python3-bpfcc python3-pip
+          sudo apt install python3-bpfcc python3-pip telnet
+          # Also install it in the host, for the tests running outside the
+          # container
           sudo pip install setuptools toml
           python -c 'import toml; open("requirements.txt.tmp", "w").write("\n".join(toml.load(open("pyproject.toml"))["project"]["dependencies"]) + "\n")'
           # Install lint requirements
           python -c 'import toml; open("requirements.txt.tmp", "a").write("\n".join(toml.load(open("pyproject.toml"))["project"]["optional-dependencies"]["lint"]) + "\n")'
           sudo pip install -r requirements.txt.tmp
 
-
       - id: fedora_tests
         run: |
-          sudo PYTHONPATH=$(pwd)/src pytest --postgresql-host 172.16.0.1 --cov --cov-report=xml
+          sudo PYTHONPATH=$(pwd)/src pytest --postgresql-host 172.16.0.1 --container fedora --cov --cov-report=xml
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v3
