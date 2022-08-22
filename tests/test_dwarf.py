@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from pgtracer.ebpf.dwarf import ProcessMetadata, Struct, StructMemberDefinition
 
-TEST_BINARY = Path(__file__).parent / "test_bins" / "test.bin"
+TEST_BINARY = Path(__file__).parent / "test_bins" / "test.elf"
 
 
 class MockProcess:

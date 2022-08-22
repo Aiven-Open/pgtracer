@@ -1,4 +1,3 @@
-
 typedef struct StructA {
 	int a_int;
 	float a_float;

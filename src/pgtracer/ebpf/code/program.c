@@ -1,4 +1,5 @@
 #include <linux/sched.h>
+#include "ebpf_maps.h"
 #include "data.h"
 #include "utils.h"
 
