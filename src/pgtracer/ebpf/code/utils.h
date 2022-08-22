@@ -14,35 +14,6 @@ static u64 pgts_to_unixts(u64 pgts)
 	return (secs + EPOCH_OFFSET) * 1000000 + microsecs;
 }
 
-static inline void capture_stack(struct pt_regs *ctx, struct stack_data_t *stack_data)
-{
-    stack_data->rax = ctx->ax;
-    stack_data->rdx = ctx->dx;
-    stack_data->rcx = ctx->cx;
-    stack_data->rbx = ctx->bx;
-    stack_data->rsi = ctx->si;
-    stack_data->rdi = ctx->di;
-    stack_data->rbp = ctx->bp;
-    stack_data->rsp = ctx->sp;
-    stack_data->r8 = ctx->r8;
-    stack_data->r9 = ctx->r9;
-    stack_data->r10 = ctx->r10;
-    stack_data->r11 = ctx->r11;
-    stack_data->r12 = ctx->r12;
-    stack_data->r13 = ctx->r13;
-    stack_data->r14 = ctx->r14;
-    stack_data->r15 = ctx->r15;
-    stack_data->rip = ctx->ip;
-    stack_data->start_addr = stack_data->rsp;
-    stack_data->size = (STACK_TOP_ADDR - stack_data->rsp);
-    if (stack_data->size > MAX_STACK_READ)
-        stack_data->size = MAX_STACK_READ;
-    if(!bpf_probe_read_user(&stack_data->stack,
-							stack_data->size,
-							(void *) (stack_data->rsp)))
-        stack_data->size = 0;
-    return;
-}
 
 // Handle code related to the portal information capture
 static inline struct portal_key_t get_portal_key(void * portal)

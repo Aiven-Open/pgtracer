@@ -1,0 +1,4 @@
+#ifndef EBPF_MAPS_H
+#define EBPF_MAPS_H
+BPF_RINGBUF_OUTPUT(event_ring, EVENTRING_PAGE_SIZE);
+#endif
