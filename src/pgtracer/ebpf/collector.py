@@ -16,8 +16,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 from bcc import BPF
 from psutil import Process
 
+from ..model import Query
 from .dwarf import ProcessMetadata
-from .query import Query
 
 
 def intenum_to_c(intenum: Type[IntEnum]) -> str:
