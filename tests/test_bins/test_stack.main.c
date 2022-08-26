@@ -2,13 +2,13 @@
 
 int func_1(int a, int b)
 {
-	return a + b;
+	int c = a + b;
+	return c;
 }
 
 int func_2(int a, int b)
 {
-	int intermediate = func_1(a + 2, b + 2);
-	return intermediate + 3;
+	return func_1(a + 1, b + 2);
 }
 
 int main(int argc, char** argv)

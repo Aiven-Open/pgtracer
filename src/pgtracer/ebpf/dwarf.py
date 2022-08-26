@@ -13,8 +13,10 @@ from __future__ import annotations
 import ctypes as ct
 import json
 import struct
+from bisect import bisect_right
 from collections import defaultdict
 from enum import IntEnum
+from operator import attrgetter
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -36,13 +38,17 @@ from elftools.construct import Container
 from elftools.construct import Struct as ConStruct
 from elftools.construct import ULInt32
 from elftools.dwarf import constants as dwarf_consts
+from elftools.dwarf.descriptions import describe_form_class
 from elftools.dwarf.die import DIE
 from elftools.dwarf.dwarf_expr import DWARFExprParser
 from elftools.dwarf.dwarfinfo import DWARFInfo
+from elftools.dwarf.locationlists import LocationParser
 from elftools.dwarf.ranges import BaseAddressEntry, RangeEntry
 from elftools.elf.elffile import ELFFile
 from elftools.elf.sections import Section
 from psutil import Process
+
+from .eh_frame_hdr import EhFrameHdr
 
 if TYPE_CHECKING:
     from ctypes import _CData
@@ -50,16 +56,48 @@ else:
     _CData = object
 
 
-def find_offset(process: Process, name: str) -> Tuple[int, ...]:
+class MappedRegion:
     """
-    From the process memory_maps, returns the offsets of the first region named
-    `name`.
+    A mapped region as parsed from /proc/<pid>/maps
     """
+
+    def __init__(
+        self, path: str, start: int, end: int, eh_frame_hdr: Optional[EhFrameHdr]
+    ):
+        self.path = path
+        self.start = start
+        self.end = end
+        self.eh_frame_hdr = eh_frame_hdr
+
+
+def get_mapped_regions(process: Process, root: Path) -> List[MappedRegion]:
+    """
+    Returns a list, sorted in the start region order.
+    """
+    mapped_regions: Dict[str, MappedRegion] = {}
     for mmap in process.memory_maps(grouped=False):
-        if mmap.path == name:
-            offsets = tuple(int(part, 16) for part in mmap.addr.split("-"))
-            return offsets
-    raise KeyError(f"No memory map named {name}")
+        start, end = tuple(int(part, 16) for part in mmap.addr.split("-"))
+        # Update it
+        mapped_region = mapped_regions.get(mmap.path)
+        if mapped_region is None:
+            eh_frame_hdr = None
+            if mmap.path.startswith("/"):
+                path = root / Path(mmap.path).relative_to("/")
+                # Test if the file is actually an ELFFile
+                if path.exists():
+                    is_elf = False
+                    with path.open("rb") as f:
+                        is_elf = f.read(4) == b"\x7fELF"
+                    if is_elf:
+                        with open(path, "rb") as f:
+                            with ELFFile(f) as elffile:
+                                eh_frame_hdr = EhFrameHdr.load_eh_frame_hdr(elffile)
+            mapped_region = MappedRegion(mmap.path, start, end, eh_frame_hdr)
+            mapped_regions[mmap.path] = mapped_region
+            continue
+        mapped_region.start = min(mapped_region.start, start)
+        mapped_region.end = max(mapped_region.end, end)
+    return sorted(mapped_regions.values(), key=attrgetter("start"))
 
 
 def extract_buildid(elffile: ELFFile) -> Optional[str]:
@@ -543,8 +581,7 @@ class ProcessMetadata:
     def __init__(self, process: Process, cache_dir: Optional[Path] = None):
         self.cache_dir = cache_dir
         self.root = Path(f"/proc/{process.pid}/root")
-        program_raw = Path(process.exe())
-        self.program = self.root / program_raw.relative_to("/")
+        self.program_raw = Path(process.exe())
         elffile = ELFFile.load_from_path(bytes(self.program))
         self.buildid = extract_buildid(elffile)
         elffile = find_debuginfo(elffile, root=self.root, buildid=self.buildid)
@@ -552,8 +589,7 @@ class ProcessMetadata:
             raise Exception(f"Couldn't find debug info for {self.program}")
         self.elffile = elffile
         self.dwarf_info = self.elffile.get_dwarf_info()
-        self.base_addr = find_offset(process, str(program_raw))[0]
-        self.stack_top = find_offset(process, "[stack]")[1]
+        self.maps = get_mapped_regions(process, self.root)
         gdb_index_section = self.elffile.get_section_by_name(".gdb_index")
         self.gdb_index: Optional[GDBIndex] = None
         self.naive_index: Dict[str, Dict[str, Set[Tuple[int, int]]]] = defaultdict(
@@ -575,6 +611,48 @@ class ProcessMetadata:
 
         self.enums = Enums(self)
         self.structs = Structs(self)
+        self.aranges = self.dwarf_info.get_aranges()
+        self.rangelists = self.dwarf_info.range_lists()
+        self.location_parser = LocationParser(self.dwarf_info.location_lists())
+
+    def map_for_addr(self, addr: int) -> Optional[MappedRegion]:
+        """
+        Returns the map containing the given addr.
+        """
+        # In python 3.10, bisect_right accepts a key argument.
+        # For now, just work on a processed thing.
+        idx = bisect_right(list(map(attrgetter("start"), self.maps)), addr)
+        mmap = self.maps[idx - 1]
+        if mmap.end > addr:
+            return mmap
+        return None
+
+    @property
+    def program(self) -> Path:
+        """
+        Returns the program as seen from our own root.
+        """
+        return self.root / self.program_raw.relative_to("/")
+
+    @property
+    def base_addr(self) -> int:
+        """
+        Returns the base address for the memory mapped for our binary.
+        """
+        for mmap in self.maps:
+            if mmap.path == str(self.program_raw):
+                return mmap.start
+        raise Exception("Could not find a memory map for {self.program_raw}")
+
+    @property
+    def stack_top(self) -> int:
+        """
+        Returns the address of the top of the stack.
+        """
+        for mmap in self.maps:
+            if mmap.path == "[stack]":
+                return mmap.end
+        raise Exception("Could not find a [stack] memory map")
 
     @property
     def cache_path(self) -> Optional[Path]:
@@ -767,3 +845,48 @@ class ProcessMetadata:
                             yield child.attributes["DW_AT_low_pc"].value
                         elif child.tag == "DW_TAG_call_site":
                             yield child.attributes["DW_AT_call_return_pc"].value
+
+    def die_contains_addr(self, die: DIE, addr: int) -> bool:
+        """
+        Returns wheter the die contains the given addr.
+        """
+        if "DW_AT_low_pc" in die.attributes:
+            low_pc = die.attributes["DW_AT_low_pc"].value
+            if "DW_AT_high_pc" not in die.attributes:
+                return False
+            high_pc_attr = die.attributes["DW_AT_high_pc"]
+            high_pc_attr_class = describe_form_class(high_pc_attr.form)
+            if high_pc_attr_class == "address":
+                high_pc = high_pc_attr.value
+            elif high_pc_attr_class == "constant":
+                high_pc = low_pc + high_pc_attr.value
+            else:
+                raise ValueError(f"invalid DW_AT_high_pc class: {high_pc_attr_class}")
+            if low_pc <= addr < high_pc:
+                return True
+        elif "DW_AT_ranges" in die.attributes:
+            range_offset = die.attributes["DW_AT_ranges"].value
+            range_list = self.rangelists.get_range_list_at_offset(range_offset, die.cu)
+            base_address = 0
+            for entry in range_list:
+                if isinstance(entry, BaseAddressEntry):
+                    base_address = entry.base_address
+                elif isinstance(entry, RangeEntry):
+                    start = entry.begin_offset + base_address
+                    end = entry.end_offset + base_address
+                    if start <= addr < end:
+                        return True
+        return False
+
+    def get_die_for_addr(self, addr: int) -> Optional[DIE]:
+        """
+        Returns the die for the subprogram spanning over addr.
+        """
+        cu_offset = self.aranges.cu_offset_at_addr(addr)
+        if cu_offset is None:
+            return None
+        cu = self.dwarf_info.get_CU_at(cu_offset)
+        for die in cu.iter_DIEs():
+            if die.tag == "DW_TAG_subprogram" and self.die_contains_addr(die, addr):
+                return die
+        return None

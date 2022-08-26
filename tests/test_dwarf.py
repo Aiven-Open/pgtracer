@@ -40,7 +40,7 @@ class TestProcessMetadata(TestCase):
     Test the dwarf helpers in ProcessMetadata.
     """
 
-    @patch("pgtracer.ebpf.dwarf.find_offset", lambda x, y: (0, 0))
+    @patch("pgtracer.ebpf.dwarf.get_mapped_regions", lambda process, root: [])
     def setUp(self):
         self.process_meta = ProcessMetadata(MockProcess(TEST_BINARY))
 

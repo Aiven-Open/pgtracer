@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING, Any, Optional
 from ..utils import timespec_to_timedelta
 
 if TYPE_CHECKING:
-    from .collector import portal_data
-    from .dwarf import ProcessMetadata
+    from ..ebpf.collector import portal_data
+    from ..ebpf.dwarf import ProcessMetadata
 
 
 class Query:
