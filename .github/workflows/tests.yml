@@ -14,9 +14,7 @@ jobs:
     # We don't fail on dev versions, as those are snapshots
     continue-on-error: ${{ matrix.experimental }}
     strategy:
-      fail-fast: true
       matrix:
-        # only use one version for the lint step
         postgresql_version: [11, 12, 13, 14, 15]
         experimental: [false]
         repo: ["pgdg"]
@@ -41,7 +39,7 @@ jobs:
           # Must be installed via the system
           sudo apt update
           sudo apt install curl ca-certificates gnupg
-          sudo apt install python3-bpfcc python3-pip
+          sudo apt install python3-bpfcc python3-pip libunwind-dev linux-headers-$(uname -r)
           curl https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/apt.postgresql.org.gpg >/dev/null
           sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-${{ matrix.repo }} main ${{ matrix.postgresql_version }}" > /etc/apt/sources.list.d/pgdg.list'
           sudo apt update
@@ -84,7 +82,7 @@ jobs:
           sudo apt install postgresql-client
           sudo ./tests/scripts/setup_fedora_container.sh
           sudo apt install curl ca-certificates gnupg
-          sudo apt install python3-bpfcc python3-pip telnet
+          sudo apt install python3-bpfcc python3-pip libunwind-dev linux-headers-$(uname -r)
           # Also install it in the host, for the tests running outside the
           # container
           sudo pip install setuptools toml

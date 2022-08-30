@@ -35,7 +35,7 @@ dnf -y --releasever=36 --best \
   iputils less ncurses passwd systemd \
   systemd-networkd systemd-resolved util-linux vim-default-editor \
   postgresql-server dnf-utils dnf-plugins-core \
-  python-bcc python-pip
+  python-bcc python-pip libunwind
 
 rm /var/lib/machines/fedora/etc/resolv.conf
 cp /etc/resolv.conf /var/lib/machines/fedora/etc/resolve.conf
