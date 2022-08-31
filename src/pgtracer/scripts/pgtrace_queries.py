@@ -77,6 +77,7 @@ def main() -> None:
                     mapping["wal_usage"] = query.instrument.walusage
                 print(query.text)
                 print(dump_dict(mapping, 1))
+                print(query.root_node.explain())
             collector.event_handler.query_history = []
         except KeyboardInterrupt:
             sys.exit(0)

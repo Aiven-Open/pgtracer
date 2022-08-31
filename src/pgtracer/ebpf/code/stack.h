@@ -25,6 +25,9 @@ struct stack_data_t {
 	char stack[MAX_STACK_READ]; // Dynamically injected using defines
 };
 
+/*
+ * Capture the current stack and register values.
+ */
 static inline int capture_stack(struct pt_regs *ctx, struct stack_data_t *stack_data, u64 max_read)
 {
 	int ret = 0;
