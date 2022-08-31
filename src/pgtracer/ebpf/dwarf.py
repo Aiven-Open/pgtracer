@@ -16,6 +16,7 @@ import struct
 from bisect import bisect_right
 from collections import defaultdict
 from enum import IntEnum
+from functools import cached_property
 from operator import attrgetter
 from pathlib import Path
 from typing import (
@@ -62,12 +63,22 @@ class MappedRegion:
     """
 
     def __init__(
-        self, path: str, start: int, end: int, eh_frame_hdr: Optional[EhFrameHdr]
+        self, path: str, start: int, end: int, real_path: Optional[Path] = None
     ):
         self.path = path
         self.start = start
         self.end = end
-        self.eh_frame_hdr = eh_frame_hdr
+        self.real_path = real_path
+
+    @cached_property
+    def eh_frame_hdr(self) -> Optional[EhFrameHdr]:
+        """
+        Returns the eh_frame_hdr for this region.
+        """
+        if self.real_path is None:
+            return None
+        with self.real_path.open("rb") as elf:
+            return EhFrameHdr.load_eh_frame_hdr(ELFFile(elf))
 
 
 def get_mapped_regions(process: Process, root: Path) -> List[MappedRegion]:
@@ -80,24 +91,32 @@ def get_mapped_regions(process: Process, root: Path) -> List[MappedRegion]:
         # Update it
         mapped_region = mapped_regions.get(mmap.path)
         if mapped_region is None:
-            eh_frame_hdr = None
+            real_path = None
             if mmap.path.startswith("/"):
-                path = root / Path(mmap.path).relative_to("/")
-                # Test if the file is actually an ELFFile
-                if path.exists():
-                    is_elf = False
-                    with path.open("rb") as f:
-                        is_elf = f.read(4) == b"\x7fELF"
-                    if is_elf:
-                        with open(path, "rb") as f:
-                            with ELFFile(f) as elffile:
-                                eh_frame_hdr = EhFrameHdr.load_eh_frame_hdr(elffile)
-            mapped_region = MappedRegion(mmap.path, start, end, eh_frame_hdr)
+                real_path = root / Path(mmap.path).relative_to("/")
+                if not real_path.exists():
+                    real_path = None
+            mapped_region = MappedRegion(mmap.path, start, end, real_path)
             mapped_regions[mmap.path] = mapped_region
             continue
         mapped_region.start = min(mapped_region.start, start)
         mapped_region.end = max(mapped_region.end, end)
     return sorted(mapped_regions.values(), key=attrgetter("start"))
+
+
+def get_actual_root(pid: int) -> Path:
+    """
+    Returns the actual root for a pid, as seen from the host.
+    """
+    with open(f"/proc/{pid}/mountinfo", "rb") as mountinfo:
+        for line in mountinfo:
+            components = line.split(b" ")
+            mountpoint = components[4]
+            if mountpoint == b"/":
+                return Path(components[3].decode("utf8"))
+    # Couldn't find it, just return the mounted point.
+    # This won't survive a process dying.
+    return Path(f"/proc/{pid}/root")
 
 
 def extract_buildid(elffile: ELFFile) -> Optional[str]:
@@ -589,7 +608,7 @@ class ProcessMetadata:
             raise Exception(f"Couldn't find debug info for {self.program}")
         self.elffile = elffile
         self.dwarf_info = self.elffile.get_dwarf_info()
-        self.maps = get_mapped_regions(process, self.root)
+        self.maps = get_mapped_regions(process, get_actual_root(process.pid))
         gdb_index_section = self.elffile.get_section_by_name(".gdb_index")
         self.gdb_index: Optional[GDBIndex] = None
         self.naive_index: Dict[str, Dict[str, Set[Tuple[int, int]]]] = defaultdict(
@@ -623,7 +642,7 @@ class ProcessMetadata:
         # For now, just work on a processed thing.
         idx = bisect_right(list(map(attrgetter("start"), self.maps)), addr)
         mmap = self.maps[idx - 1]
-        if mmap.end > addr:
+        if mmap.start <= addr < mmap.end:
             return mmap
         return None
 
@@ -888,5 +907,16 @@ class ProcessMetadata:
         cu = self.dwarf_info.get_CU_at(cu_offset)
         for die in cu.iter_DIEs():
             if die.tag == "DW_TAG_subprogram" and self.die_contains_addr(die, addr):
-                return die
+                # Check if we can find something an inlined subroutine in here.
+                return self._recurse_die_for_addr(die, addr)
         return None
+
+    def _recurse_die_for_addr(self, die: DIE, addr: int) -> Optional[DIE]:
+        if not self.die_contains_addr(die, addr):
+            return None
+        for child in die.iter_children():
+            if child.tag == "DW_TAG_inlined_subroutine":
+                child_match = self._recurse_die_for_addr(child, addr)
+                if child_match:
+                    return child_match
+        return die

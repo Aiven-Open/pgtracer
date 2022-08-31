@@ -25,6 +25,13 @@ def timespec_to_timedelta(timespec: _CData) -> timedelta:
     )
 
 
+def timespec_to_float(timespec: _CData) -> float:
+    """
+    Convert a timespec_t struct to a float representing the number of seconds.
+    """
+    return float(timespec.tv_sec.value + timespec.tv_nsec.value / 1000000000)  # type: ignore
+
+
 NSPID_PARSING_RE = re.compile(rb"^NSpid:\s+((?:(?:\d+)\s*)+)")
 
 

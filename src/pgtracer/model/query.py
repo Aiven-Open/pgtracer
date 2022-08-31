@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import ctypes as ct
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
+from ..ebpf.unwind import UnwindAddressSpace
 from ..utils import timespec_to_timedelta
+from .plan import PlanState
 
 if TYPE_CHECKING:
-    from ..ebpf.collector import portal_data
+    from ..ebpf.collector import planstate_data, portal_data
     from ..ebpf.dwarf import ProcessMetadata
 
 
@@ -32,6 +34,21 @@ class Query:
         self.text = text
         self.instrument = instrument
         self.search_path = search_path
+        self.nodes: Dict[int, PlanState] = {}
+
+    @property
+    def root_node(self) -> PlanState:
+        """
+        Returns the plan's root node.
+        """
+        root_candidates = [
+            node for node in self.nodes.values() if node.parent_node is None
+        ]
+        if len(root_candidates) != 1:
+            raise ValueError(
+                f"Invalid plan, we have {len(root_candidates)} roots when we expect 1"
+            )
+        return root_candidates[0]
 
     @classmethod
     def from_event(cls, metadata: ProcessMetadata, event: portal_data) -> Query:
@@ -80,3 +97,44 @@ class Query:
         if self.instrument:
             return timespec_to_timedelta(self.instrument.counter)
         return None
+
+    def add_node_from_event(
+        self, metadata: ProcessMetadata, event: planstate_data
+    ) -> PlanState:
+        """
+        Add a node from planstate_data event to this query plantree.
+        We walk the stack up to understand where the nodes are located relative
+        to each other.
+        """
+        nodes = self.nodes
+        planstate = nodes.get(event.planstate_addr)
+        if planstate is None:
+            planstate = PlanState(event.planstate_addr)
+            nodes[event.planstate_addr] = planstate
+        planstate.update(metadata, event)
+        # It's not a stub, so we already resolved its parent
+        if not planstate.is_stub:
+            return planstate
+        # Since it is a new node, try to resolve it's parent.
+        addr_space = UnwindAddressSpace(event.stack_capture, metadata)
+        cur_node = planstate
+        for idx, frame in enumerate(addr_space.frames()):
+            # First frame is ours, so skip it
+            if idx == 0:
+                continue
+            # FIXME: more functions should probably be added here.
+            if frame.function_name in ("ExecProcNodeFirst", "ExecProcNodeInstr"):
+                parent_addr = frame.fetch_arg(1, ct.c_ulonglong).value
+                parent_node = nodes.get(parent_addr)
+                if parent_node is None:
+                    parent_node = PlanState(parent_addr)
+                    nodes[parent_addr] = parent_node
+                cur_node.parent_node = parent_node
+                parent_node.children.add(cur_node)
+                # The parent_node is already not a stub, meaning its ancestors
+                # have been resolved. Stop walking the frame here
+                if not parent_node.is_stub:
+                    break
+                cur_node = parent_node
+        planstate.is_stub = False
+        return planstate

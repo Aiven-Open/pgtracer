@@ -8,6 +8,15 @@ static int override_instrument_options(void * querydesc);
 int executorstart_enter(struct pt_regs *ctx)
 {
 	void *queryDesc = (void *) PT_REGS_PARM1(ctx);
+#ifdef USER_INSTRUMENT_OPTIONS
+	override_instrument_options(queryDesc);
+#endif
+	return 0;
+}
+
+int executorrun_enter(struct pt_regs *ctx)
+{
+	void *queryDesc = (void *) PT_REGS_PARM1(ctx);
 	void *sourceText;
 	void *portaladdr;
 	void *search_path;
@@ -23,11 +32,8 @@ int executorstart_enter(struct pt_regs *ctx)
 						sizeof(void *),
 						OffsetFrom(queryDesc, QueryDesc, sourceText));
 	bpf_probe_read_user_str(&event->query, MAX_QUERY_LENGTH, sourceText);
-	event->event_type = EventTypeExecutorStart;
+	event->event_type = EventTypeExecutorRun;
 	event->portal_key = key;
-#ifdef USER_INSTRUMENT_OPTIONS
-	override_instrument_options(queryDesc);
-#endif
 	bpf_probe_read_user(&search_path, sizeof(void *), (void *) GlobalVariablesnamespace_search_path);
 	bpf_probe_read_user_str(&event->search_path, MAX_SEARCHPATH_LENGTH,
 							search_path);
@@ -102,4 +108,8 @@ static int override_instrument_options(void * querydesc)
 	instr_options |= USER_INSTRUMENT_OPTIONS;
 	return bpf_probe_write_user(options_addr, &instr_options, sizeof(int));
 }
+#endif
+
+#ifdef CAPTURE_PLANS
+#include "plan.h"
 #endif

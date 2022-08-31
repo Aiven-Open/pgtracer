@@ -10,19 +10,19 @@ import platform
 import re
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Type, TypeVar
+from typing import TYPE_CHECKING, Any, Generator, List, Optional, Tuple, Type, TypeVar
 
 from elftools.dwarf.callframe import CFARule, CFIEntry
 from elftools.dwarf.die import DIE, AttributeValue
 from elftools.dwarf.dwarf_expr import DWARFExprOp, DWARFExprParser
 from elftools.dwarf.locationlists import BaseAddressEntry, LocationEntry, LocationExpr
 
-from .dwarf import MappedRegion, ProcessMetadata
+from .dwarf import MappedRegion, ProcessMetadata, die_name
 
 if TYPE_CHECKING:
     CFuncPtr = ct._FuncPointer  # pylint: disable=protected-access
     Pointer = ct.pointer
-    SimpleCData = ct._SimpleCData[Any]
+    SimpleCData = ct._SimpleCData[Any]  # pylint: disable=protected-access
 else:
     # Make pylint happy
     CFuncPtr = object()
@@ -30,7 +30,7 @@ else:
     SimpleCData = Any
 
 
-CT = TypeVar("CT", bound=SimpleCData)  # pylint: disable=protected-access
+CT = TypeVar("CT", bound=SimpleCData)
 
 ARCH = platform.machine()
 
@@ -377,7 +377,7 @@ class Frame:
         """
         Returns the CFA rule associated with this call frame.
         """
-        if self.region is None or self.fde is None:
+        if self.fde is None:
             return None
         for row in reversed(self.fde.get_decoded().table):
             if row["pc"] < self.ip - self.region.start:
@@ -420,11 +420,23 @@ class Frame:
         return None
 
     @cached_property
-    def region(self) -> Optional[MappedRegion]:
+    def function_name(self) -> Optional[str]:
+        """
+        Returns the function name associated to this frame's DIE
+        """
+        if self.die is None:
+            return None
+        return die_name(self.die)
+
+    @cached_property
+    def region(self) -> MappedRegion:
         """
         Return the MappedRegion correspoding to this Frame's IP.
         """
-        return self.processmetadata.map_for_addr(self.ip)
+        region = self.processmetadata.map_for_addr(self.ip)
+        if region is None:
+            raise ValueError("This frame could not be associated to a region.")
+        return region
 
     def _get_parsed_expr_for_attribute(self, argnum: int) -> List[DWARFExprOp]:
         """
@@ -463,7 +475,7 @@ class Frame:
                 elif isinstance(entry, LocationEntry):
                     start = entry.begin_offset + base_address
                     end = entry.end_offset + base_address
-                    if start <= self.ip < end:
+                    if start <= (self.ip - self.region.start) < end:
                         expr = entry.loc_expr
                         break
                 else:
@@ -573,6 +585,7 @@ class UnwindAddressSpace:
         """
         # Find the top of the elfile.
         mmap = self.processmetadata.map_for_addr(ip)
+
         if mmap is None or mmap.eh_frame_hdr is None:
             return -UNW_ESTOPUNWIND
         pip[0] = unw_proc_info_t()
@@ -589,7 +602,9 @@ class UnwindAddressSpace:
         dynamic_info.rti.table_data = (
             mmap.start + mmap.eh_frame_hdr.table_start + mmap.eh_frame_hdr.offset
         )
-        dynamic_info.rti.table_len = mmap.eh_frame_hdr.fde_count
+        dynamic_info.rti.table_len = (mmap.eh_frame_hdr.fde_count * 8) // ct.sizeof(
+            unw_word_t
+        )
         ret: int = dwarf_search_unwind_table(
             addr_space, ip, ct.byref(dynamic_info), pip, need_unwind_info, None
         )
@@ -636,7 +651,6 @@ class UnwindAddressSpace:
         region = self.processmetadata.map_for_addr(addr)
         if region is None:
             return -UNW_EINVAL
-
         if region.path == "[stack]":
             stack_idx = addr - self.capture.start_addr
             if stack_idx >= self.capture.size:
@@ -650,14 +664,14 @@ class UnwindAddressSpace:
             return 0
 
         # It's from the ELFFile itself.
-        if region.path == str(self.processmetadata.program_raw):
+        if region.real_path:
             if write == 0:
-                elf = self.processmetadata.elffile
-                elf.stream.seek(addr - self.processmetadata.base_addr)
-                valp[0] = unw_word_t.from_buffer(
-                    bytearray(elf.stream.read(ct.sizeof(unw_word_t)))
-                )
-                return 0
+                with region.real_path.open("rb") as f:
+                    f.seek(addr - region.start)
+                    valp[0] = unw_word_t.from_buffer(
+                        bytearray(f.read(ct.sizeof(unw_word_t)))
+                    )
+                    return 0
             return -UNW_EINVAL
 
         # It's from anywhere else: return EINVAL
@@ -710,23 +724,19 @@ class UnwindAddressSpace:
         # pylint: disable=unused-argument,too-many-arguments
         return -UNW_EINVAL
 
-    def frames(self) -> List[Frame]:
+    def frames(self) -> Generator[Frame, None, None]:
         """
         Returns the list of frames for this stack.
         """
         cur = ct.byref(self.unw_cursor)
-        frames = []
-        prev_frame = None
-        frames.append(
-            Frame(
-                self.capture.stack,
-                self.capture.start_addr,
-                self.processmetadata,
-                self.unw_cursor,
-            )
+        first_frame = Frame(
+            self.capture.stack,
+            self.capture.start_addr,
+            self.processmetadata,
+            self.unw_cursor,
         )
+        prev_frame = first_frame
         while step(cur) > 0:
-            prev_frame = frames[-1]
             cur_frame = Frame(
                 self.capture.stack,
                 self.capture.start_addr,
@@ -734,6 +744,7 @@ class UnwindAddressSpace:
                 self.unw_cursor,
                 prev_frame=prev_frame,
             )
-            frames.append(cur_frame)
             prev_frame.next_frame = cur_frame
-        return frames
+            yield prev_frame
+            prev_frame = cur_frame
+        yield prev_frame

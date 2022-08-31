@@ -93,7 +93,7 @@ class TestStackUnwinding(TestCase):
         #   main
         #    func_2
         adress_space = UnwindAddressSpace(self.captured_data[0], pm)
-        frames = adress_space.frames()
+        frames = list(adress_space.frames())
         assert len(frames) == 3
         assert frames[0].region.path == str(binpath)
         assert die_name(frames[0].die) == "func_2"
@@ -112,7 +112,7 @@ class TestStackUnwinding(TestCase):
         #    func_2
         #      func_1
         adress_space = UnwindAddressSpace(self.captured_data[1], pm)
-        frames = adress_space.frames()
+        frames = list(adress_space.frames())
         assert len(frames) == 4
         assert frames[0].region.path == str(binpath)
         assert die_name(frames[0].die) == "func_1"
