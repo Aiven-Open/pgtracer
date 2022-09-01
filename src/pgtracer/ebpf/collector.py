@@ -11,6 +11,8 @@ from __future__ import annotations
 import ctypes as ct
 from enum import IntEnum
 from pathlib import Path
+from threading import Lock, Thread
+from time import sleep
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 
 from bcc import BPF
@@ -378,7 +380,8 @@ class BPF_Collector:
         self.bpf = self.prepare_bpf()
         self.event_handler: EventHandler = EventHandler()
         self.update_struct_defs()
-        self._started = False
+        self.is_running = False
+        self.lock = Lock()
 
     def update_struct_defs(self) -> None:
         """
@@ -520,6 +523,14 @@ class BPF_Collector:
                 pid=self.pid,
             )
 
+    def background_polling(self, refresh_rate: int) -> None:
+        """
+        Run the polling in the background.
+        """
+        while self.is_running:
+            self.bpf.ring_buffer_poll(refresh_rate)
+            sleep(refresh_rate / 1000.0)
+
     def start(self) -> None:
         """
         Start the ebpf collector:
@@ -537,8 +548,16 @@ class BPF_Collector:
             self._attach_uprobe("ExecProcNodeFirst", "execprocnodefirst_enter")
             for func in self.ExecEndFuncs:
                 self._attach_uprobe(func, "execendnode_enter")
-        self._started = True
+        self.is_running = True
+        background_thread = Thread(target=self.background_polling, args=(100,))
+        background_thread.start()
         print("eBPF collector started")
+
+    def stop(self) -> None:
+        """
+        Stop polling the collector.
+        """
+        self.is_running = False
 
     # pylint: disable=unused-argument
     def _handle_event(self, cpu: int, data: ct._CData, size: int) -> int:
@@ -546,6 +565,9 @@ class BPF_Collector:
         Callback for the ring_buffer_poll. We actually dispatch this to the
         `EventHandler`
         """
+        # Returning a negative value aborts polling
+        if not self.is_running:
+            return -1
         return self.event_handler.handle_event(self, data)
 
     def _optional_code(self) -> str:
@@ -573,12 +595,3 @@ class BPF_Collector:
         cflags.append("-Wno-ignored-attributes")
         bpf = BPF(text=buf.encode("utf8"), cflags=cflags, debug=0)
         return bpf
-
-    def poll(self, timeout: int = -1) -> None:
-        """
-        Wrapper around ring_buffer_poll: the first time we're called, we attach
-        the probes.
-        """
-        if not self._started:
-            self.start()
-        self.bpf.ring_buffer_poll(timeout)

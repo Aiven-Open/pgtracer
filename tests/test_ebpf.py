@@ -2,6 +2,7 @@
 This module acts as a general health check for the eBPF collector.
 """
 from datetime import timedelta
+from time import sleep
 
 from pgtracer.utils import timespec_to_timedelta as tstimedelta
 
@@ -23,7 +24,7 @@ def test_basic_ebf_collector(bpfcollector, connection):
     # Now try running a query, and see if we can get it back
     with connection.execute("SELECT now()") as cur:
         querystart = cur.fetchall()[0][0].replace(microsecond=0, tzinfo=None)
-    bpfcollector.poll(10)
+    wait_for_collector(bpfcollector)
     assert len(bpfcollector.event_handler.query_history) == 1
     query = bpfcollector.event_handler.query_history[0]
     assert query.text == "SELECT now()"
@@ -41,7 +42,8 @@ def test_instrumentation(bpfcollector_instrumented, connection):
     connection.execute("SET track_io_timing = on")
     with connection.execute("SELECT * FROM pg_class") as cur:
         cur.fetchall()
-    bpfcollector_instrumented.poll(10)
+    wait_for_collector(bpfcollector_instrumented)
+
     assert len(bpfcollector_instrumented.event_handler.query_history) == 1
     query = bpfcollector_instrumented.event_handler.query_history[0]
     assert query.instrument.need_timer.value is True
@@ -62,7 +64,7 @@ def test_instrumentation(bpfcollector_instrumented, connection):
     connection.execute("SET work_mem = '64kB'")
     with connection.execute("SELECT * FROM generate_series(1, 10000) as t"):
         pass
-    bpfcollector_instrumented.poll(10)
+    wait_for_collector(bpfcollector_instrumented)
     query = bpfcollector_instrumented.event_handler.query_history[0]
     assert query.text == "SELECT * FROM generate_series(1, 10000) as t"
     assert query.instrument.bufusage.temp_blks_read.value > 0

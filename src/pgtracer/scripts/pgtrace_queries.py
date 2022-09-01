@@ -4,6 +4,7 @@ This simple script trace queries executed by a Postgres backend.
 
 import argparse
 import sys
+import time
 from datetime import timedelta
 from typing import Any, Dict
 
@@ -58,11 +59,11 @@ def main() -> None:
     pid = args.pid
 
     collector = BPF_Collector(pid, instrument_options=args.instrument)
-
+    collector.start()
+    total_queries = 0
     while True:
         try:
-            collector.poll(1000)
-
+            time.sleep(1)
             for query in collector.event_handler.query_history:
                 parts = []
                 start = "<unknown>"
@@ -78,8 +79,11 @@ def main() -> None:
                 print(query.text)
                 print(dump_dict(mapping, 1))
                 print(query.root_node.explain())
+            total_queries += len(collector.event_handler.query_history)
+            print(f"Saw {total_queries} queries so far")
             collector.event_handler.query_history = []
         except KeyboardInterrupt:
+            collector.stop()
             sys.exit(0)
 
 
