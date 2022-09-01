@@ -423,7 +423,9 @@ class StructMemberDefinition:
 
         if issubclass(self.member_type, Struct):
             return self.member_type(addr)
-        return self.member_type.from_address(addr)
+        value = self.member_type()
+        ct.pointer(value)[0] = self.member_type.from_address(addr)
+        return value
 
 
 class Struct:
@@ -441,6 +443,7 @@ class Struct:
     def __init__(self, buffer_addr: int):
         self.buffer_addr = buffer_addr
         self.members: Dict[str, Union[_CData, Struct]] = {}
+        self.as_dict(include_all=True)
 
     def __init_subclass__(cls) -> None:
         super().__init_subclass__()

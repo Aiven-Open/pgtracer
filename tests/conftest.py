@@ -151,7 +151,9 @@ def bpfcollector(
     """
     Returns a bpfcollector associated to the current connection.
     """
-    yield make_collector(connection, request.config)
+    collector = make_collector(connection, request.config)
+    yield collector
+    collector.stop()
 
 
 @pytest.fixture
@@ -161,4 +163,8 @@ def bpfcollector_instrumented(
     """
     Returns a bpfcollector with instrumentation turned on.
     """
-    yield make_collector(connection, request.config, instrument_options=2147483647)
+    collector = make_collector(
+        connection, request.config, instrument_options=2147483647
+    )
+    yield collector
+    collector.stop()
