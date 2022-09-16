@@ -480,9 +480,10 @@ class Frame:
             get_reg(self.cursor, ARGNUM_TO_REGNUM[argnum], ct.byref(rv))
             return ctype(rv.value)
         expr = self._get_parsed_expr_for_attribute(argnum)
-        if len(expr) != 1:
-            raise NotImplementedError("Multiple expressions not supported")
-        return self._eval_expr(expr[0], ctype)
+        dwarf_stack = []
+        for op in expr:
+            rv = self.eval_expr(op, ctype, dwarf_stack)
+        return rv
 
     def _read_arg_from_stack(self, offset: int, ctype: Type[CT]) -> CT:
         """
@@ -491,7 +492,9 @@ class Frame:
         assert 0 <= offset < len(self.stack)  # type: ignore
         return ctype.from_buffer(bytearray(self.stack)[offset:])  # type: ignore
 
-    def _eval_expr(self, expr: DWARFExprOp, ctype: Type[CT]) -> CT:
+    def eval_expr(
+        self, expr: DWARFExprOp, ctype: Type[CT], dwarf_stack: List[CT]
+    ) -> CT:
         """
         Eval simple expressions.
         """
@@ -499,17 +502,29 @@ class Frame:
         if self.die is None:
             raise ValueError("No DIE could be found for frame {self}")
         if expr.op_name == "DW_OP_fbreg":
+            # If we are an inlined subroutine, lookup the parent frame base.
+            die = self.die
+            while die.tag == "DW_TAG_inlined_subroutine":
+                die = self.next_frame.die
             frameexpr = self.processmetadata.location_parser.parse_from_attribute(
-                self.die.attributes["DW_AT_frame_base"],
+                die.attributes["DW_AT_frame_base"],
                 self.die.cu.header.version,
                 self.die,
             )
             parsed_expr = self._expr_parser.parse_expr(frameexpr.loc_expr)
-            base_value = self._eval_expr(parsed_expr[0], ct.c_int).value
+            base_value = self.eval_expr(parsed_expr[0], ct.c_int, dwarf_stack).value
             offset = base_value + expr.args[0]
             return self._read_arg_from_stack(offset, ctype)
         if expr.op_name == "DW_OP_call_frame_cfa":
             return ctype(self.cfa)
+        if expr.op_name == "DW_OP_entry_value":
+            # We evaluate the expression in the calling frame.
+            for op in expr.args[0]:
+                rv = self.next_frame.eval_expr(op, ctype, dwarf_stack)
+            dwarf_stack.append(rv)
+            return
+        if expr.op_name == "DW_OP_stack_value":
+            return dwarf_stack[-1]
         if expr.op_name.startswith("DW_OP_reg"):
             regnum = expr.op - 0x50
             val = unw_word_t(0)
