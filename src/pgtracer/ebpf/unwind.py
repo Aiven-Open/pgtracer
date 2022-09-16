@@ -477,16 +477,18 @@ class Frame:
         Fetch the argument number argnum, interpreting it as a ctype.
         """
         # We have all the registers set up correctly, fetch things directly.
+        rv: CT
         if self.cfa is None:
             # Fetch the argument directly from the register
-            rv = unw_word_t(0)
+            argreg = unw_word_t(0)
             ARGNUM_TO_REGNUM = {1: 5, 2: 4, 3: 1, 4: 2, 5: 8}
-            get_reg(self.cursor, ARGNUM_TO_REGNUM[argnum], ct.byref(rv))
-            return ctype(rv.value)
+            get_reg(self.cursor, ARGNUM_TO_REGNUM[argnum], ct.byref(argreg))
+            return ctype(argreg.value)
         expr = self._get_parsed_expr_for_attribute(argnum)
-        if len(expr) != 1:
-            raise NotImplementedError("Multiple expressions not supported")
-        return self._eval_expr(expr[0], ctype)
+        dwarf_stack: List[CT] = []
+        for op in expr:
+            rv = self.eval_expr(op, ctype, dwarf_stack)
+        return rv
 
     def _read_arg_from_stack(self, offset: int, ctype: Type[CT]) -> CT:
         """
@@ -495,7 +497,9 @@ class Frame:
         assert 0 <= offset < len(self.stack)  # type: ignore
         return ctype.from_buffer(bytearray(self.stack)[offset:])  # type: ignore
 
-    def _eval_expr(self, expr: DWARFExprOp, ctype: Type[CT]) -> CT:
+    def eval_expr(
+        self, expr: DWARFExprOp, ctype: Type[CT], dwarf_stack: List[CT]
+    ) -> CT:
         """
         Eval simple expressions.
         """
@@ -503,17 +507,36 @@ class Frame:
         if self.die is None:
             raise ValueError("No DIE could be found for frame {self}")
         if expr.op_name == "DW_OP_fbreg":
+            # If we are an inlined subroutine, lookup the parent frame base.
+            die = self.die
+            while die.tag == "DW_TAG_inlined_subroutine":
+                if self.next_frame is None:
+                    raise Exception("Cannot find parent frame of inlined subroutine")
+                die = self.next_frame.die
             frameexpr = self.processmetadata.location_parser.parse_from_attribute(
-                self.die.attributes["DW_AT_frame_base"],
+                die.attributes["DW_AT_frame_base"],
                 self.die.cu.header.version,
                 self.die,
             )
             parsed_expr = self._expr_parser.parse_expr(frameexpr.loc_expr)
-            base_value = self._eval_expr(parsed_expr[0], ct.c_int).value
-            offset = base_value + expr.args[0]
+            for item in parsed_expr:
+                base_value = self.eval_expr(item, ct.c_int, dwarf_stack)  # type: ignore
+            offset = base_value.value + expr.args[0]
             return self._read_arg_from_stack(offset, ctype)
         if expr.op_name == "DW_OP_call_frame_cfa":
             return ctype(self.cfa)
+        if expr.op_name == "DW_OP_entry_value":
+            # We evaluate the expression in the calling frame.
+            for op in expr.args[0]:
+                if self.next_frame is None:
+                    raise Exception(
+                        "Cannot find parent frame for evaluation of entry point"
+                    )
+                rv = self.next_frame.eval_expr(op, ctype, dwarf_stack)
+            dwarf_stack.append(rv)
+            return ctype(0)
+        if expr.op_name == "DW_OP_stack_value":
+            return dwarf_stack[-1]
         if expr.op_name.startswith("DW_OP_reg"):
             regnum = expr.op - 0x50
             val = unw_word_t(0)
