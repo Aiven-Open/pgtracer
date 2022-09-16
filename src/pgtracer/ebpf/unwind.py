@@ -336,6 +336,8 @@ class Frame:
     def __init__(
         self,
         stack: ct._CData,
+        ip: int,
+        die: DIE,
         start_addr: int,
         processmetadata: ProcessMetadata,
         cursor: unw_cursor_t,
@@ -343,6 +345,9 @@ class Frame:
         next_frame: Optional[Frame] = None,
     ):
         self.stack = stack
+        self.ip = ip
+        self.die = die
+
         self.start_addr = start_addr
         self.processmetadata = processmetadata
         # We don't keep the cursor itself, we make a copy instead.
@@ -396,28 +401,14 @@ class Frame:
         return cfa_reg_value.value + self.cfa_rule.offset - self.start_addr  # type: ignore
 
     @cached_property
-    def ip(self) -> int:
+    def region(self) -> MappedRegion:
         """
-        Extract the ip from the cursor's registers.
+        Return the MappedRegion correspoding to this Frame's IP.
         """
-        ip = unw_word_t(0)
-        get_reg(self.cursor, UNW_REG_IP, ct.byref(ip))
-        return ip.value
-
-    @cached_property
-    def die(self) -> Optional[DIE]:
-        """
-        Returns the die of the function associated with this Frame, if it is
-        defined in the binary we instrument itself.
-
-        We don't try to load debug symbols for shared libraries.
-        """
-        if self.region and self.region.path == str(self.processmetadata.program_raw):
-            die = self.processmetadata.get_die_for_addr(
-                self.ip - self.processmetadata.base_addr
-            )
-            return die
-        return None
+        region = self.processmetadata.map_for_addr(self.ip)
+        if region is None:
+            raise ValueError("This frame could not be associated to a region.")
+        return region
 
     @cached_property
     def function_name(self) -> Optional[str]:
@@ -427,16 +418,6 @@ class Frame:
         if self.die is None:
             return None
         return die_name(self.die)
-
-    @cached_property
-    def region(self) -> MappedRegion:
-        """
-        Return the MappedRegion correspoding to this Frame's IP.
-        """
-        region = self.processmetadata.map_for_addr(self.ip)
-        if region is None:
-            raise ValueError("This frame could not be associated to a region.")
-        return region
 
     def _get_parsed_expr_for_attribute(self, argnum: int) -> List[DWARFExprOp]:
         """
@@ -724,27 +705,56 @@ class UnwindAddressSpace:
         # pylint: disable=unused-argument,too-many-arguments
         return -UNW_EINVAL
 
+    def ip(self) -> int:
+        """
+        Return the instruction pointer from the unwind cursor.
+        """
+        ip = unw_word_t(0)
+        get_reg(self.unw_cursor, UNW_REG_IP, ct.byref(ip))
+        return ip.value
+
+    def dies_for_ip(self) -> Tuple[DIE, ...]:
+        """
+        Return a tuple of DIEs for a given ip.
+        """
+        ip = self.ip()
+        region = self.processmetadata.map_for_addr(ip)
+        if region is None:
+            raise ValueError("This frame could not be associated to a region.")
+        if region.path == str(self.processmetadata.program_raw):
+            dies = self.processmetadata.get_die_and_inlined_subdies_for_addr(
+                ip - region.start
+            )
+            if dies is not None:
+                return dies
+        return (None,)
+
     def frames(self) -> Generator[Frame, None, None]:
         """
         Returns the list of frames for this stack.
         """
         cur = ct.byref(self.unw_cursor)
-        first_frame = Frame(
-            self.capture.stack,
-            self.capture.start_addr,
-            self.processmetadata,
-            self.unw_cursor,
-        )
-        prev_frame = first_frame
-        while step(cur) > 0:
-            cur_frame = Frame(
-                self.capture.stack,
-                self.capture.start_addr,
-                self.processmetadata,
-                self.unw_cursor,
-                prev_frame=prev_frame,
-            )
-            prev_frame.next_frame = cur_frame
+        prev_frame = None
+        while True:
+            # Extract the IP
+            ip = self.ip()
+            for die in self.dies_for_ip():
+                # The cursor is copied by the frame, no need to
+                # worry about it
+                cur_frame = Frame(
+                    self.capture.stack,
+                    ip,
+                    die,
+                    self.capture.start_addr,
+                    self.processmetadata,
+                    self.unw_cursor,
+                    prev_frame=prev_frame,
+                )
+                if prev_frame is not None:
+                    prev_frame.next_frame = cur_frame
+                    yield prev_frame
+                prev_frame = cur_frame
+            if step(cur) <= 0:
+                break
+        if prev_frame is not None:
             yield prev_frame
-            prev_frame = cur_frame
-        yield prev_frame

@@ -16,6 +16,59 @@ if TYPE_CHECKING:
     from ..ebpf.dwarf import ProcessMetadata
 
 
+FUNCTION_ARGS_MAPPING = {
+    "ExecProcNodeFirst": 1,
+    "ExecProcNodeInstr": 1,
+    "ExecProcNode": 1,
+    "ExecAgg": 1,
+    "ExecAppend": 1,
+    "ExecBitmapAnd": 1,
+    "ExecBitmapHeapScan": 1,
+    "ExecBitmapIndexScan": 1,
+    "ExecBitmapOr": 1,
+    "ExecCteScan": 1,
+    "ExecCustomScan": 1,
+    "ExecForeignScan": 1,
+    "ExecFunctionScan": 1,
+    "ExecGather": 1,
+    "ExecGatherMerge": 1,
+    "ExecGroup": 1,
+    "ExecHash": 1,
+    "ExecHashJoin": 1,
+    "ExecIncrementalSort": 1,
+    "ExecIndexOnlyScan": 1,
+    "ExecIndexScan": 1,
+    "ExecLimit": 1,
+    "ExecLockRows": 1,
+    "ExecMaterial": 1,
+    "ExecMemoize": 1,
+    "ExecMergeAppend": 1,
+    "ExecMergeJoin": 1,
+    "ExecModifyTable": 1,
+    "ExecNamedTuplestoreScan": 1,
+    "ExecNestLoop": 1,
+    "ExecProjectSet": 1,
+    "ExecRecursiveUnion": 1,
+    "ExecResult": 1,
+    "ExecSampleScan": 1,
+    "ExecSeqScan": 1,
+    "ExecSetOp": 1,
+    "ExecSort": 1,
+    "ExecSubqueryScan": 1,
+    "ExecTableFuncScan": 1,
+    "ExecTidRangeScan": 1,
+    "ExecTidScan": 1,
+    "ExecUnique": 1,
+    "ExecValuesScan": 1,
+    "ExecWindowAgg": 1,
+    "ExecWorkTableScan": 1,
+    "MultiExecHash": 1,
+    "MultiExecBitmapIndexScan": 1,
+    "MultiExecBitmapAnd": 1,
+    "MultiExecBitmapOr": 1,
+}
+
+
 class Query:
     """
     A PostgreSQL Query.
@@ -107,24 +160,25 @@ class Query:
         to each other.
         """
         nodes = self.nodes
-        planstate = nodes.get(event.planstate_addr)
+        addr_space = UnwindAddressSpace(event.stack_capture, metadata)
+        addr = event.planstate_addr
+        planstate = nodes.get(addr)
         if planstate is None:
-            planstate = PlanState(event.planstate_addr)
-            nodes[event.planstate_addr] = planstate
+            planstate = PlanState(addr)
+            nodes[addr] = planstate
         planstate.update(metadata, event)
-        # It's not a stub, so we already resolved its parent
         if not planstate.is_stub:
             return planstate
-        # Since it is a new node, try to resolve it's parent.
-        addr_space = UnwindAddressSpace(event.stack_capture, metadata)
         cur_node = planstate
         for idx, frame in enumerate(addr_space.frames()):
             # First frame is ours, so skip it
             if idx == 0:
                 continue
-            # FIXME: more functions should probably be added here.
-            if frame.function_name in ("ExecProcNodeFirst", "ExecProcNodeInstr"):
-                parent_addr = frame.fetch_arg(1, ct.c_ulonglong).value
+            if frame.function_name in FUNCTION_ARGS_MAPPING:
+                argnum = FUNCTION_ARGS_MAPPING[frame.function_name]
+                parent_addr = frame.fetch_arg(argnum, ct.c_ulonglong).value
+                if parent_addr == cur_node.addr:
+                    continue
                 parent_node = nodes.get(parent_addr)
                 if parent_node is None:
                     parent_node = PlanState(parent_addr)

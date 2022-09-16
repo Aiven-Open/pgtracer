@@ -900,9 +900,11 @@ class ProcessMetadata:
                         return True
         return False
 
-    def get_die_for_addr(self, addr: int) -> Optional[DIE]:
+    def get_die_and_inlined_subdies_for_addr(
+        self, addr: int
+    ) -> Optional[Tuple[DIE, ...]]:
         """
-        Returns the die for the subprogram spanning over addr.
+        Returns the containing die and inlined functions DIEs for given addr.
         """
         cu_offset = self.aranges.cu_offset_at_addr(addr)
         if cu_offset is None:
@@ -914,12 +916,12 @@ class ProcessMetadata:
                 return self._recurse_die_for_addr(die, addr)
         return None
 
-    def _recurse_die_for_addr(self, die: DIE, addr: int) -> Optional[DIE]:
+    def _recurse_die_for_addr(self, die: DIE, addr: int) -> Optional[Tuple[DIE, ...]]:
         if not self.die_contains_addr(die, addr):
             return None
         for child in die.iter_children():
             if child.tag == "DW_TAG_inlined_subroutine":
-                child_match = self._recurse_die_for_addr(child, addr)
-                if child_match:
-                    return child_match
-        return die
+                subdies = self._recurse_die_for_addr(child, addr)
+                if subdies:
+                    return subdies + (die,)
+        return (die,)
