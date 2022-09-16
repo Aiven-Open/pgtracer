@@ -1,6 +1,7 @@
 """
 This module acts as a general health check for the eBPF collector.
 """
+import re
 from datetime import timedelta
 from time import sleep
 
@@ -103,3 +104,22 @@ def test_plans(bpfcollector_instrumented, connection):
     assert seqscan_node.tag == NodeTag.T_SeqScan
     assert len(seqscan_node.children) == 0
     assert seqscan_node.parent_node == sort_node
+
+
+def test_explain(bpfcollector, connection):
+    """
+    Test that we are able to build a plans.
+    """
+    cost_snippet = r"\d+\.\d+\..\d+\.\d+"
+    wanted_plan = rf"""Limit \(cost={cost_snippet} rows=10 width=\d+\) \(actual time=0.000...0.000 rows=0 loops=0\)
+\t-> Sort \(cost={cost_snippet} rows=\d+ width=\d+\) \(actual time=0.000...0.000 rows=0 loops=0\)
+\t\t-> SeqScan \(cost={cost_snippet} rows=\d+ width=\d+\) \(actual time=0.000...0.000 rows=0 loops=0\)"""
+
+    with connection.execute(
+        "SELECT * FROM (SELECT * FROM pg_class ORDER BY reltype LIMIT 10) t"
+    ) as cur:
+        cur.fetchall()
+    wait_for_collector(bpfcollector)
+    query = bpfcollector.event_handler.query_history[0]
+    root_node = query.root_node
+    assert re.match(wanted_plan, root_node.explain())
