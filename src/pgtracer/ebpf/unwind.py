@@ -456,7 +456,7 @@ class Frame:
                 elif isinstance(entry, LocationEntry):
                     start = entry.begin_offset + base_address
                     end = entry.end_offset + base_address
-                    if start <= (self.ip - self.region.start) < end:
+                    if start <= (self.ip - self.region.start) <= end:
                         expr = entry.loc_expr
                         break
                 else:
