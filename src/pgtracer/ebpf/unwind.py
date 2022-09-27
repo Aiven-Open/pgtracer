@@ -20,8 +20,12 @@ from elftools.dwarf.locationlists import BaseAddressEntry, LocationEntry, Locati
 from .dwarf import MappedRegion, ProcessMetadata, die_name
 
 if TYPE_CHECKING:
-    CFuncPtr = ct._FuncPointer  # pylint: disable=protected-access
-    Pointer = ct.pointer
+    try:
+        from typing import TypeAlias  # type: ignore
+    except ImportError:
+        from typing_extensions import TypeAlias
+    CFuncPtr: TypeAlias = ct._FuncPointer  # pylint: disable=protected-access
+    Pointer: TypeAlias = ct.pointer
     SimpleCData = ct._SimpleCData[Any]  # pylint: disable=protected-access
 else:
     # Make pylint happy
@@ -177,7 +181,7 @@ def unw_func(funcname: str) -> CFuncPtr:
     Returns the CPointer function of that name. Depending on the architecture,
     the function names are not the same.
     """
-    return getattr(libunwind, f"{UNW_PREFIX}{funcname}")  # type: ignore
+    return getattr(libunwind, f"{UNW_PREFIX}{funcname}")
 
 
 class unw_dyn_remote_table_info_t(ct.Structure):
