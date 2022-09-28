@@ -74,13 +74,23 @@ def main() -> None:
                 mapping["search_path"] = query.search_path
                 if args.instrument > 0 and query.instrument:
                     mapping["runtime"] = str(query.runtime)
+                    mapping["written_bytes_to_disk"] = str(query.io_counters["W"])
+                    if query.shared_buffers_hitratio is not None:
+                        mapping[
+                            "shared_buffers_hitratio"
+                        ] = f"{query.shared_buffers_hitratio:0.2f}"
+                    else:
+                        mapping["shared_buffers_hitratio"] = None
+                    if query.syscache_hitratio is not None:
+                        mapping["syscache_hitratio"] = f"{query.syscache_hitratio:0.2f}"
+                    else:
+                        mapping["syscache_hitratio"] = None
                     mapping["buffer_usage"] = query.instrument.bufusage
                     mapping["wal_usage"] = query.instrument.walusage
                 print(query.text)
                 print(dump_dict(mapping, 1))
                 print(query.root_node.explain())
             total_queries += len(collector.event_handler.query_history)
-            print(f"Saw {total_queries} queries so far")
             collector.event_handler.query_history = []
         except KeyboardInterrupt:
             collector.stop()
