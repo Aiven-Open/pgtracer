@@ -72,6 +72,7 @@ class EventType(IntEnum):
     DropPortalReturn = 4
     ExecProcNodeFirst = 5
     ExecEndNode = 6
+    KBlockRqIssue = 7
 
 
 class portal_key(ct.Structure):
@@ -132,6 +133,18 @@ class portal_data(StubStructure):
     ]
 
 
+class io_req_data(ct.Structure):
+    """
+    Represents the io_req_data coming from instrumenting the kernel.
+    """
+
+    _fields_ = [
+        ("event_type", ct.c_short),
+        ("rwbs", ct.c_char * 8),
+        ("bytes", ct.c_ulonglong),
+    ]
+
+
 class plan_data(ct.Structure):
     """
     Represents the data associated with a PlanNode.
@@ -177,6 +190,7 @@ class EventHandler:
         self.query_cache: Dict[Tuple[int, int], Query] = {}
         self.query_history: List[Query] = []
         self.last_portal_key: Optional[Tuple[int, int]] = None
+        self.current_executor: Optional[Tuple[int, int]] = None
 
     def handle_event(self, bpf_collector: BPF_Collector, event: ct._CData) -> int:
         """
@@ -206,6 +220,7 @@ class EventHandler:
         """
         event = ct.cast(event, ct.POINTER(portal_data)).contents
         key = event.portal_key.as_tuple()
+        self.current_executor = event.portal_key.as_tuple()
         if key not in self.query_cache:
             self.query_cache[key] = Query.from_event(bpf_collector.metadata, event)
         else:
@@ -220,6 +235,8 @@ class EventHandler:
         """
         event = ct.cast(event, ct.POINTER(portal_data)).contents
         key = event.portal_key.as_tuple()
+        if self.current_executor:
+            self.current_executor = None
         if key in self.query_cache:
             self.query_cache[event.portal_key.as_tuple()].update(
                 bpf_collector.metadata, event
@@ -259,13 +276,13 @@ class EventHandler:
         We remove the query from the internal cache  and append it to history.
         """
         event = ct.cast(event, ct.POINTER(portal_data)).contents
-
         if self.last_portal_key is not None:
             if self.last_portal_key in self.query_cache:
                 query = self.query_cache[self.last_portal_key]
                 self.query_history.append(query)
                 del self.query_cache[self.last_portal_key]
             self.last_portal_key = None
+        self.current_executor = None
         return 0
 
     def handle_ExecProcNodeFirst(
@@ -305,6 +322,30 @@ class EventHandler:
         instrument_addr = ct.addressof(event.instrument)
         instrument = bpf_collector.metadata.structs.Instrumentation(instrument_addr)
         node.instrument = instrument
+        return 0
+
+    def handle_KBlockRqIssue(
+        self, bpf_collector: BPF_Collector, event: ct._CData
+    ) -> int:
+        """
+        Handle KBlockRqIssue event. This event is produced by a kernel
+        tracepoint on block_rq_issue.
+
+        This serves to keep a count of block IO performed by a device, which
+        can be useful to compute "real" cache hit ratio.
+        """
+        event = ct.cast(event, ct.POINTER(io_req_data)).contents
+        # We try to attach it to a specific query.
+        # If we don't have one, don't bother
+        if not self.current_executor:
+            return 0
+        query = self.query_cache.get(self.current_executor)
+        if query is None:
+            return 0
+        if b"R" in event.rwbs:
+            query.io_counters["R"] += event.bytes
+        elif b"W" in event.rwbs:
+            query.io_counters["W"] += event.bytes
         return 0
 
 
@@ -574,6 +615,7 @@ class BPF_Collector:
         buf = ""
         if self.enable_plans_collection:
             buf += load_c_file("plan.c")
+        buf += load_c_file("block_rq.c")
         return buf
 
     def prepare_bpf(self) -> BPF:

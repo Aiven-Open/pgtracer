@@ -34,6 +34,8 @@ def test_basic_ebf_collector(bpfcollector, connection):
     assert query.runtime == timedelta(0)
     assert query.instrument.need_timer.value is False
     assert query.instrument.need_bufusage.value is False
+    assert query.shared_buffers_hitratio is None
+    assert query.syscache_hitratio is None
 
 
 def test_instrumentation(bpfcollector_instrumented, connection):
@@ -41,7 +43,11 @@ def test_instrumentation(bpfcollector_instrumented, connection):
     Test that turning instrumentation on works as expected.
     """
     connection.execute("SET track_io_timing = on")
-    with connection.execute("SELECT * FROM pg_class") as cur:
+    # We want to have at least a few system reads, so do what is necessary...
+    with open("/proc/sys/vm/drop_caches", "wb") as procf:
+        procf.write(b"1")
+
+    with connection.execute("SELECT * FROM pg_attribute") as cur:
         cur.fetchall()
     wait_for_collector(bpfcollector_instrumented)
 
@@ -59,6 +65,17 @@ def test_instrumentation(bpfcollector_instrumented, connection):
         assert tstimedelta(query.instrument.bufusage.temp_blk_write_time) == timedelta(
             0
         )
+    # We can't make any assumptions about the hit ratios, so just ensure they
+    # have some valid values.
+    assert 0 <= query.shared_buffers_hitratio < 100
+    # The syscache_hitratio can be negative, when we actually end up reading
+    # more blocks than what is accounted for by instrumentation.
+    assert query.syscache_hitratio < 100
+
+    # Check that we don't crash without any instrumentation whatshowever
+    query.instrument = None
+    assert query.shared_buffers_hitratio is None
+    assert query.syscache_hitratio is None
 
     # Generate some temp files for fun
     bpfcollector_instrumented.event_handler.query_history = []

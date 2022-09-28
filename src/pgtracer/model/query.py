@@ -4,6 +4,7 @@ This module contains definitions for representing PostgreSQL queries.
 from __future__ import annotations
 
 import ctypes as ct
+from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
@@ -88,6 +89,7 @@ class Query:
         self.instrument = instrument
         self.search_path = search_path
         self.nodes: Dict[int, PlanState] = {}
+        self.io_counters: Dict[str, int] = defaultdict(lambda: 0)
 
     @property
     def root_node(self) -> PlanState:
@@ -150,6 +152,42 @@ class Query:
         if self.instrument:
             return timespec_to_timedelta(self.instrument.counter)
         return None
+
+    @property
+    def shared_buffers_hitratio(self) -> Optional[float]:
+        """
+        Returns the hit ratio from the shared buffers.
+        """
+        if self.instrument is None:
+            return None
+        bufusage = self.instrument.bufusage
+        total_blks = bufusage.shared_blks_hit.value + bufusage.shared_blks_read.value
+        # If we didn't read any block, hit ratio is None
+        if total_blks == 0:
+            return None
+        return float(bufusage.shared_blks_hit.value / total_blks * 100)
+
+    @property
+    def syscache_hitratio(self) -> Optional[float]:
+        """
+        Returns the system's hit ratio.
+        """
+        if self.instrument is None:
+            return None
+        bufusage = self.instrument.bufusage
+        # FIXME: don't assume a fixed block size, either pass it as an option
+        # or query the actual value from the DB
+        BLKSIZE = 8192
+        total_blks = (
+            bufusage.shared_blks_read.value
+            + bufusage.local_blks_read.value
+            + bufusage.temp_blks_read.value
+        )
+        total_bytes = total_blks * BLKSIZE
+        if total_bytes == 0:
+            return None
+        bytes_hit = total_bytes - self.io_counters["R"]
+        return float(bytes_hit / total_bytes * 100)
 
     def add_node_from_event(
         self, metadata: ProcessMetadata, event: planstate_data

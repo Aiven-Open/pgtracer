@@ -77,7 +77,6 @@ int portaldrop_return(struct pt_regs *ctx)
 	return 0;
 }
 
-
 int portaldrop_enter(struct pt_regs *ctx)
 {
 	void *portal =  (void *) PT_REGS_PARM1(ctx);
