@@ -128,9 +128,9 @@ def test_explain(bpfcollector, connection):
     Test that we are able to build a plans.
     """
     cost_snippet = r"\d+\.\d+\..\d+\.\d+"
-    wanted_plan = rf"""Limit \(cost={cost_snippet} rows=10 width=\d+\) \(actual time=0.000...0.000 rows=0 loops=0\)
-\t-> Sort \(cost={cost_snippet} rows=\d+ width=\d+\) \(actual time=0.000...0.000 rows=0 loops=0\)
-\t\t-> SeqScan \(cost={cost_snippet} rows=\d+ width=\d+\) \(actual time=0.000...0.000 rows=0 loops=0\)"""
+    wanted_plan = rf"""Limit \(cost={cost_snippet} rows=10 width=\d+\) \(actual time=0.000...0.000 rows=0 loops=1\)
+\t-> Sort \(cost={cost_snippet} rows=\d+ width=\d+\) \(actual time=0.000...0.000 rows=0 loops=1\)
+\t\t-> SeqScan \(cost={cost_snippet} rows=\d+ width=\d+\) \(actual time=0.000...0.000 rows=0 loops=1\)"""
 
     with connection.execute(
         "SELECT * FROM (SELECT * FROM pg_class ORDER BY reltype LIMIT 10) t"
