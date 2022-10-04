@@ -81,7 +81,7 @@ def nonroot_postgres(request: FixtureRequest) -> Iterator[PostgreSQLExecutor]:
             datadir=str(datadir),
         )
         postgresql_executor.VERSION_RE = re.compile(
-            ".* (?P<version>\\d+((\\.\\d+)|beta\\d|dev))"
+            ".* (?P<version>\\d+((\\.\\d+)|beta\\d|rc\\d|dev))"
         )
         pid = os.fork()
         if pid == 0:
