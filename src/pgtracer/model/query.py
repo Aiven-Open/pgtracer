@@ -222,7 +222,7 @@ class Query:
                     parent_node = PlanState(parent_addr)
                     nodes[parent_addr] = parent_node
                 cur_node.parent_node = parent_node
-                parent_node.children.add(cur_node)
+                parent_node.children[cur_node] = None
                 # The parent_node is already not a stub, meaning its ancestors
                 # have been resolved. Stop walking the frame here
                 if not parent_node.is_stub:
