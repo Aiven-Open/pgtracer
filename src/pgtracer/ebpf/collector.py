@@ -321,6 +321,7 @@ class EventHandler:
             return 0
         instrument_addr = ct.addressof(event.instrument)
         instrument = bpf_collector.metadata.structs.Instrumentation(instrument_addr)
+        instrument.nloops = ct.c_double(instrument.nloops.value + 1)  # type: ignore
         node.instrument = instrument
         return 0
 
