@@ -4,7 +4,7 @@ This module contains definitions for representing PostgreSQL plans.
 from __future__ import annotations
 
 import ctypes as ct
-from typing import TYPE_CHECKING, Dict, Optional, Set
+from typing import TYPE_CHECKING, Dict, Optional
 
 from ..utils import timespec_to_float
 
@@ -34,7 +34,8 @@ class PlanState:
         self.parent_node: Optional[PlanState] = None
         self.plan_data: Optional[plan_data] = None
         self.is_stub = True
-        self.children: Set[PlanState] = set()
+        # We're using a Dict as poor man's OrderedSet
+        self.children: Dict[PlanState, None] = {}
 
     def update(self, metadata: ProcessMetadata, event: planstate_data) -> None:
         """
