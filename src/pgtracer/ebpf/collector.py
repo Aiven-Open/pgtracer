@@ -9,9 +9,10 @@ The BPFCollector works by combining two things:
 from __future__ import annotations
 
 import ctypes as ct
+from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
-from threading import Lock, Thread
+from threading import Thread
 from time import sleep
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 
@@ -350,6 +351,32 @@ class EventHandler:
         return 0
 
 
+class InstrumentationFlags(IntEnum):
+    """
+    Instrumentation flags.
+
+    Mimic the InstrumentOption enum from PG.
+    We define it statically here as it can be used from options.
+    """
+
+    TIMER = 1 << 0
+    BUFFERS = 1 << 1
+    ROWS = 1 << 2
+    WAL = 1 << 3
+    ALL = 0x7FFFFFFF  # INT32 Max
+
+
+@dataclass
+class CollectorOptions:
+    """
+    Dataclass for collector options.
+    """
+
+    instrument_flags: int = 0
+    enable_nodes_collection: bool = False
+    enable_perf_events: bool = False
+
+
 class BPF_Collector:
     """
     Workhorse for pgtracer.
@@ -407,23 +434,30 @@ class BPF_Collector:
 
     def __init__(
         self,
-        pid: int,
-        instrument_options: Optional[int] = None,
-        enable_plans_collection: bool = True,
+        metadata: ProcessMetadata,
+        options: CollectorOptions = CollectorOptions(),
     ):
-        self.pid = pid
-        self.process = Process(self.pid)
-        # FIXME: make this configurable
-        cache_dir = Path("~/.cache").expanduser() / "pgtracer"
-        self.metadata = ProcessMetadata(self.process, cache_dir=cache_dir)
+        self.options = options
+        self.pid = metadata.pid
+        self.metadata = metadata
         self.program = str(self.metadata.program).encode("utf8")
-        self.enable_plans_collection = enable_plans_collection
-        self.instrument_options = instrument_options
         self.bpf = self.prepare_bpf()
         self.event_handler: EventHandler = EventHandler()
         self.update_struct_defs()
         self.is_running = False
-        self.lock = Lock()
+
+    @classmethod
+    def from_pid(
+        cls, pid: int, options: CollectorOptions = CollectorOptions()
+    ) -> BPF_Collector:
+        """
+        Build a BPF_Collector from a pid.
+        """
+        # FIXME: make this configurable
+        cache_dir = Path("~/.cache").expanduser() / "pgtracer"
+        process = Process(pid=pid)
+        processmetadata = ProcessMetadata(process, cache_dir=cache_dir)
+        return cls(processmetadata, options)
 
     def update_struct_defs(self) -> None:
         """
@@ -465,10 +499,10 @@ class BPF_Collector:
             "EVENTRING_PAGE_SIZE": 1024,
         }
 
-        # USER_INSTRUMENT_OPTIONS is defined only if the user wants to
+        # USER_INSTRUMENT_FLAGS is defined only if the user wants to
         # inconditonally turn on instrumentation.
-        if self.instrument_options:
-            constants["USER_INSTRUMENT_OPTIONS"] = self.instrument_options
+        if self.options.instrument_flags:
+            constants["USER_INSTRUMENT_FLAGS"] = self.options.instrument_flags
 
         return constants
 
@@ -586,7 +620,7 @@ class BPF_Collector:
         self._attach_uprobe("standard_ExecutorStart", "executorstart_enter")
         self._attach_uprobe("standard_ExecutorRun", "executorrun_enter")
         self._attach_uprobe("ExecutorFinish", "executorfinish_enter")
-        if self.enable_plans_collection:
+        if self.options.enable_nodes_collection:
             self._attach_uprobe("ExecProcNodeFirst", "execprocnodefirst_enter")
             for func in self.ExecEndFuncs:
                 self._attach_uprobe(func, "execendnode_enter")
@@ -614,7 +648,7 @@ class BPF_Collector:
 
     def _optional_code(self) -> str:
         buf = ""
-        if self.enable_plans_collection:
+        if self.options.enable_nodes_collection:
             buf += load_c_file("plan.c")
         buf += load_c_file("block_rq.c")
         return buf

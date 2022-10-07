@@ -602,6 +602,7 @@ class ProcessMetadata:
 
     def __init__(self, process: Process, cache_dir: Optional[Path] = None):
         self.cache_dir = cache_dir
+        self.pid = process.pid
         self.root = Path(f"/proc/{process.pid}/root")
         self.program_raw = Path(process.exe())
         elffile = ELFFile.load_from_path(bytes(self.program))
