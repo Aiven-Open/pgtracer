@@ -8,8 +8,13 @@ import time
 from datetime import timedelta
 from typing import Any, Dict
 
-from pgtracer.ebpf.collector import BPF_Collector
+from pgtracer.ebpf.collector import (
+    BPF_Collector,
+    CollectorOptions,
+    InstrumentationFlags,
+)
 from pgtracer.ebpf.dwarf import Struct
+from pgtracer.model.query import Query
 
 
 def dump_dict(somedict: Dict[str, Any], indent: int = 0) -> str:
@@ -39,6 +44,39 @@ def dump_dict(somedict: Dict[str, Any], indent: int = 0) -> str:
     return "\n".join(parts)
 
 
+def print_query(query: Query, options: CollectorOptions) -> None:
+    """
+    Print a query according to which collector options have been set.
+    """
+    parts = []
+    start = "<unknown>"
+    if query.start_datetime is not None:
+        start = query.start_datetime.isoformat()
+    parts.append(f"{start} {query.text}")
+    mapping = {}
+    mapping["search_path"] = query.search_path
+    if options.instrument_flags & InstrumentationFlags.TIMER:
+        mapping["runtime"] = str(query.runtime)
+    if options.instrument_flags & InstrumentationFlags.BUFFERS:
+        mapping["written_bytes_to_disk"] = str(query.io_counters["W"])
+        if query.shared_buffers_hitratio is not None:
+            mapping["shared_buffers_hitratio"] = f"{query.shared_buffers_hitratio:0.2f}"
+        else:
+            mapping["shared_buffers_hitratio"] = None
+        if query.syscache_hitratio is not None:
+            mapping["syscache_hitratio"] = f"{query.syscache_hitratio:0.2f}"
+        else:
+            mapping["syscache_hitratio"] = None
+        if query.instrument:
+            mapping["buffer_usage"] = query.instrument.bufusage
+    if options.instrument_flags & InstrumentationFlags.WAL and query.instrument:
+        mapping["wal_usage"] = query.instrument.walusage
+    print(query.text)
+    print(dump_dict(mapping, 1))
+    if options.enable_nodes_collection:
+        print(query.root_node.explain())
+
+
 def main() -> None:
     """
     Entry point for the pgtrace_queries script.
@@ -50,46 +88,32 @@ def main() -> None:
     parser.add_argument(
         "--instrument",
         "-I",
-        type=int,
+        type=str,
         default=None,
-        help="Instrument flags to set (warning: writes into backends memory!)",
+        nargs="*",
+        choices=[flag.name for flag in InstrumentationFlags],
+        action="extend",
+        help="""Instrument flags to set. (warning: writes into backends
+        memory!)""",
     )
+    parser.add_argument("--nodes-collection", "-n", default=False, action="store_true")
 
     args = parser.parse_args()
     pid = args.pid
-
-    collector = BPF_Collector(pid, instrument_options=args.instrument)
+    instrument_flags = 0
+    for flag in args.instrument:
+        instrument_flags |= InstrumentationFlags[flag]
+    options = CollectorOptions(
+        instrument_flags=instrument_flags, enable_nodes_collection=args.nodes_collection
+    )
+    collector = BPF_Collector.from_pid(pid, options)
     collector.start()
     total_queries = 0
     while True:
         try:
             time.sleep(1)
             for query in collector.event_handler.query_history:
-                parts = []
-                start = "<unknown>"
-                if query.start_datetime is not None:
-                    start = query.start_datetime.isoformat()
-                parts.append(f"{start} {query.text}")
-                mapping = {}
-                mapping["search_path"] = query.search_path
-                if args.instrument > 0 and query.instrument:
-                    mapping["runtime"] = str(query.runtime)
-                    mapping["written_bytes_to_disk"] = str(query.io_counters["W"])
-                    if query.shared_buffers_hitratio is not None:
-                        mapping[
-                            "shared_buffers_hitratio"
-                        ] = f"{query.shared_buffers_hitratio:0.2f}"
-                    else:
-                        mapping["shared_buffers_hitratio"] = None
-                    if query.syscache_hitratio is not None:
-                        mapping["syscache_hitratio"] = f"{query.syscache_hitratio:0.2f}"
-                    else:
-                        mapping["syscache_hitratio"] = None
-                    mapping["buffer_usage"] = query.instrument.bufusage
-                    mapping["wal_usage"] = query.instrument.walusage
-                print(query.text)
-                print(dump_dict(mapping, 1))
-                print(query.root_node.explain())
+                print_query(query, options)
             total_queries += len(collector.event_handler.query_history)
             collector.event_handler.query_history = []
         except KeyboardInterrupt:

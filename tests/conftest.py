@@ -18,7 +18,11 @@ from pytest_postgresql.config import get_config
 from pytest_postgresql.executor import PostgreSQLExecutor
 from pytest_postgresql.executor_noop import NoopExecutor
 
-from pgtracer.ebpf.collector import BPF_Collector
+from pgtracer.ebpf.collector import (
+    BPF_Collector,
+    CollectorOptions,
+    InstrumentationFlags,
+)
 from pgtracer.utils import resolve_container_pid
 
 
@@ -139,7 +143,9 @@ def make_collector(
         # If we have a container, look into it to translate the backend_pid
         # to the host namespace.
         backend_pid = resolve_container_pid(config.getoption("container"), backend_pid)
-    collector = BPF_Collector(pid=backend_pid, **kwargs)
+    kwargs.setdefault("enable_nodes_collection", True)
+    options = CollectorOptions(**kwargs)
+    collector = BPF_Collector.from_pid(pid=backend_pid, options=options)
     collector.start()
     return collector
 
@@ -164,7 +170,7 @@ def bpfcollector_instrumented(
     Returns a bpfcollector with instrumentation turned on.
     """
     collector = make_collector(
-        connection, request.config, instrument_options=2147483647
+        connection, request.config, instrument_flags=InstrumentationFlags.ALL
     )
     yield collector
     collector.stop()

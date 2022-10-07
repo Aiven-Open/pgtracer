@@ -8,7 +8,7 @@ static int override_instrument_options(void * querydesc);
 int executorstart_enter(struct pt_regs *ctx)
 {
 	void *queryDesc = (void *) PT_REGS_PARM1(ctx);
-#ifdef USER_INSTRUMENT_OPTIONS
+#ifdef USER_INSTRUMENT_FLAGS
 	override_instrument_options(queryDesc);
 #endif
 	return 0;
@@ -96,7 +96,7 @@ int portaldrop_enter(struct pt_regs *ctx)
 	return 0;
 }
 
-#ifdef USER_INSTRUMENT_OPTIONS
+#ifdef USER_INSTRUMENT_FLAGS
 static int override_instrument_options(void * querydesc)
 {
 	void * options_addr = OffsetFrom(querydesc, QueryDesc, instrument_options);
@@ -104,7 +104,7 @@ static int override_instrument_options(void * querydesc)
 	bpf_probe_read_user(&instr_options,
 						sizeof(int),
 						options_addr);
-	instr_options |= USER_INSTRUMENT_OPTIONS;
+	instr_options |= USER_INSTRUMENT_FLAGS;
 	return bpf_probe_write_user(options_addr, &instr_options, sizeof(int));
 }
 #endif
