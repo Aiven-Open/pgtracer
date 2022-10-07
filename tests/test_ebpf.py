@@ -127,7 +127,7 @@ def test_explain(bpfcollector, connection):
     """
     Test that we are able to build a plans.
     """
-    # We have some trouble wi
+    # We have some trouble with collecting instrumentation for PG < 12
     if connection.info.server_version < 120000:
         return
     cost_snippet = r"\d+\.\d+\..\d+\.\d+"
