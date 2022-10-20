@@ -170,7 +170,10 @@ def bpfcollector_instrumented(
     Returns a bpfcollector with instrumentation turned on.
     """
     collector = make_collector(
-        connection, request.config, instrument_flags=InstrumentationFlags.ALL
+        connection,
+        request.config,
+        instrument_flags=InstrumentationFlags.ALL,
+        enable_perf_events=True,
     )
     yield collector
     collector.stop()
