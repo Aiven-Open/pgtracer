@@ -78,12 +78,20 @@ class Query:
     def __init__(
         self,
         *,
+        query_id: int,
+        startup_cost: float,
+        total_cost: float,
+        plan_rows: float,
         startts: Optional[float] = None,
         text: Optional[str] = None,
-        # Instrumentation is dynamically generated class, no way to check it
+        # Instrumentation is a dynamically generated class, no way to check it
         instrument: Any = None,
         search_path: Optional[str] = None,
     ):
+        self.query_id = query_id
+        self.startup_cost = startup_cost
+        self.total_cost = total_cost
+        self.plan_rows = plan_rows
         self.startts = startts
         self.text = text
         self.instrument = instrument
@@ -116,6 +124,10 @@ class Query:
         if event.search_path:
             search_path = event.search_path.decode("utf8")
         return cls(
+            query_id=event.query_id,
+            startup_cost=event.startup_cost,
+            total_cost=event.total_cost,
+            plan_rows=event.plan_rows,
             startts=event.portal_key.creation_time,
             text=event.query.decode("utf8"),
             instrument=instrument,
