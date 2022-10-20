@@ -20,6 +20,8 @@ int executorrun_enter(struct pt_regs *ctx)
 	void *sourceText;
 	void *portaladdr;
 	void *search_path;
+	void *plan;
+
 	struct portal_data_t *event;
 	bpf_probe_read_user(&portaladdr,
 						sizeof(void*),
@@ -28,12 +30,9 @@ int executorrun_enter(struct pt_regs *ctx)
 	event = event_ring.ringbuf_reserve(sizeof(struct portal_data_t));
 	if (!event)
 		return 1;
-	bpf_probe_read_user(&sourceText,
-						sizeof(void *),
-						OffsetFrom(queryDesc, QueryDesc, sourceText));
-	bpf_probe_read_user_str(&event->query, MAX_QUERY_LENGTH, sourceText);
 	event->event_type = EventTypeExecutorRun;
 	event->portal_key = key;
+	fill_portal_data(queryDesc, event);
 	bpf_probe_read_user(&search_path, sizeof(void *), (void *) GlobalVariablesnamespace_search_path);
 	bpf_probe_read_user_str(&event->search_path, MAX_SEARCHPATH_LENGTH,
 							search_path);

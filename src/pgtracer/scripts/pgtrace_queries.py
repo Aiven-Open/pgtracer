@@ -55,6 +55,10 @@ def print_query(query: Query, options: CollectorOptions) -> None:
     parts.append(f"{start} {query.text}")
     mapping = {}
     mapping["search_path"] = query.search_path
+    mapping["query_id"] = str(query.query_id) or "<unavailable>"
+    mapping["startup_cost"] = str(query.startup_cost)
+    mapping["total_cost"] = str(query.total_cost)
+    mapping["plan_rows"] = str(query.plan_rows)
     if options.instrument_flags & InstrumentationFlags.TIMER:
         mapping["runtime"] = str(query.runtime)
     if options.instrument_flags & InstrumentationFlags.BUFFERS:
@@ -75,6 +79,20 @@ def print_query(query: Query, options: CollectorOptions) -> None:
     print(dump_dict(mapping, 1))
     if options.enable_nodes_collection:
         print(query.root_node.explain())
+
+
+def print_running_query(query: Query, first_time: bool) -> None:
+    """
+    Print the currently running query.
+    """
+    if first_time:
+        print("Currently running:")
+        print(query.text)
+        print("Tuples produced / tuple expected")
+        print("")
+    print("\x1b[1A", end="")
+    print("\x1b[2K", end="")
+    print(f"{int(query.instrument.tuplecount.value)} / {int(query.plan_rows)}")
 
 
 def main() -> None:
@@ -104,14 +122,25 @@ def main() -> None:
     for flag in args.instrument:
         instrument_flags |= InstrumentationFlags[flag]
     options = CollectorOptions(
-        instrument_flags=instrument_flags, enable_nodes_collection=args.nodes_collection
+        instrument_flags=instrument_flags,
+        enable_nodes_collection=args.nodes_collection,
+        enable_perf_events=instrument_flags != 0,
     )
     collector = BPF_Collector.from_pid(pid, options)
     collector.start()
     total_queries = 0
+    last_running_query = None
     while True:
         try:
             time.sleep(1)
+            if not collector.event_handler.query_history and collector.current_query:
+                print_running_query(
+                    collector.current_query,
+                    last_running_query is not collector.current_query,
+                )
+                last_running_query = collector.current_query
+                continue
+            last_running_query = None
             for query in collector.event_handler.query_history:
                 print_query(query, options)
             total_queries += len(collector.event_handler.query_history)

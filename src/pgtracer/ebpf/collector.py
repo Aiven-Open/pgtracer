@@ -16,7 +16,7 @@ from threading import Thread
 from time import sleep
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 
-from bcc import BPF
+from bcc import BPF, PerfSWConfig, PerfType
 from psutil import Process
 
 from ..model import Query
@@ -74,6 +74,7 @@ class EventType(IntEnum):
     ExecProcNodeFirst = 5
     ExecEndNode = 6
     KBlockRqIssue = 7
+    MemoryResponse = 8
 
 
 class portal_key(ct.Structure):
@@ -120,6 +121,10 @@ class StubStructure(ct.Structure):
         cls._fields_ = list(fields_dict.items())
 
 
+MAX_QUERY_LENGTH = 2048
+MAX_SEARCHPATH_LENGTH = 1024
+
+
 class portal_data(StubStructure):
     """
     Represents the portal_data associated to a portal.
@@ -128,9 +133,14 @@ class portal_data(StubStructure):
     _protofields = [
         ("event_type", ct.c_short),
         ("portal_key", portal_key),
-        ("query", ct.c_char * 2048),
+        ("query_addr", ct.c_ulonglong),
+        ("query_id", ct.c_ulonglong),
+        ("startup_cost", ct.c_double),
+        ("total_cost", ct.c_double),
+        ("plan_rows", ct.c_double),
+        ("query", ct.c_char * MAX_QUERY_LENGTH),
         ("instrument", instrument_type),
-        ("search_path", ct.c_char * 1024),
+        ("search_path", ct.c_char * MAX_SEARCHPATH_LENGTH),
     ]
 
 
@@ -178,6 +188,43 @@ class planstate_data(StubStructure):
     ]
 
 
+MEMORY_REQUEST_MAXSIZE = 1024
+MEMORY_PATH_SIZE = 5
+
+
+class memory_request(ct.Structure):
+    """
+    Represents a memory request, to be processed in the perf event handler.
+    """
+
+    _fields_ = [
+        ("requestId", ct.c_int),
+        ("path_size", ct.c_int),
+        ("size", ct.c_ulonglong),
+        ("memory_path", ct.c_ulonglong * MEMORY_PATH_SIZE),
+    ]
+
+
+class memory_response(ct.Structure):
+    """
+    Represents a memory response, sent back from the perf event handler.
+    """
+
+    _fields_ = [
+        ("event_type", ct.c_short),
+        ("requestId", ct.c_int),
+        ("payload", ct.c_char * MEMORY_REQUEST_MAXSIZE),
+    ]
+
+    @property
+    def payload_addr(self) -> int:
+        """
+        Returns the address of the payload field: useful to parse it into it's
+        own struct.
+        """
+        return ct.addressof(self) + memory_response.payload.offset
+
+
 class EventHandler:
     """
     Base class for handling events.
@@ -192,6 +239,8 @@ class EventHandler:
         self.query_history: List[Query] = []
         self.last_portal_key: Optional[Tuple[int, int]] = None
         self.current_executor: Optional[Tuple[int, int]] = None
+        self.current_query_requests: Dict[int, memory_request] = {}
+        self.nextRequestId = 0
 
     def handle_event(self, bpf_collector: BPF_Collector, event: ct._CData) -> int:
         """
@@ -222,10 +271,36 @@ class EventHandler:
         event = ct.cast(event, ct.POINTER(portal_data)).contents
         key = event.portal_key.as_tuple()
         self.current_executor = event.portal_key.as_tuple()
+        self.current_query_requests = {}
         if key not in self.query_cache:
             self.query_cache[key] = Query.from_event(bpf_collector.metadata, event)
         else:
             self.query_cache[key].update(bpf_collector.metadata, event)
+        bpf_collector.current_query = self.query_cache[key]
+        # If perf events are enabled, start watching the query instrumentation.
+        if bpf_collector.options.enable_perf_events:
+            structs = bpf_collector.metadata.structs
+            # FIXME: this should go to a helper method, taking the
+            # full path in C notation
+            reqId = self.nextRequestId = self.nextRequestId + 1
+            mempath_length = 3
+            memory_path = (ct.c_ulonglong * MEMORY_PATH_SIZE)()
+            memory_path[0] = (
+                event.query_addr
+                + structs.QueryDesc.field_definition("planstate").offset  # type:ignore
+            )
+            memory_path[1] = structs.PlanState.field_definition(
+                "instrument"
+            ).offset  # type:ignore
+            memory_path[2] = 0
+            request = memory_request(
+                requestId=reqId,
+                path_size=mempath_length,
+                size=structs.Instrumentation.size(),
+                memory_path=memory_path,
+            )
+            self.current_query_requests[reqId] = request
+            bpf_collector.send_memory_request(request)
         return 0
 
     def handle_ExecutorFinish(
@@ -238,6 +313,8 @@ class EventHandler:
         key = event.portal_key.as_tuple()
         if self.current_executor:
             self.current_executor = None
+            bpf_collector.current_query = None
+        self.current_query_requests = {}
         if key in self.query_cache:
             self.query_cache[event.portal_key.as_tuple()].update(
                 bpf_collector.metadata, event
@@ -284,6 +361,7 @@ class EventHandler:
                 del self.query_cache[self.last_portal_key]
             self.last_portal_key = None
         self.current_executor = None
+        bpf_collector.current_query = None
         return 0
 
     def handle_ExecProcNodeFirst(
@@ -348,6 +426,25 @@ class EventHandler:
             query.io_counters["R"] += event.bytes
         elif b"W" in event.rwbs:
             query.io_counters["W"] += event.bytes
+        return 0
+
+    def handle_MemoryResponse(
+        self, bpf_collector: BPF_Collector, event: ct._CData
+    ) -> int:
+        """
+        Handle MemoryResponse event.
+
+        We lookup the requestId, and update the given counters if needed.
+        """
+        ev = ct.cast(event, ct.POINTER(memory_response)).contents
+        request = self.current_query_requests.pop(ev.requestId, None)
+        if request and self.current_executor:
+            query = self.query_cache.get(self.current_executor, None)
+            if query:
+                instr = bpf_collector.metadata.structs.Instrumentation(ev.payload_addr)
+                query.instrument = instr
+                self.current_query_requests[ev.requestId] = request
+                bpf_collector.send_memory_request(request)
         return 0
 
 
@@ -445,6 +542,7 @@ class BPF_Collector:
         self.event_handler: EventHandler = EventHandler()
         self.update_struct_defs()
         self.is_running = False
+        self.current_query: Optional[Query] = None
 
     @classmethod
     def from_pid(
@@ -471,9 +569,9 @@ class BPF_Collector:
         # Update global struct definitions with actual sizes
         portal_data.update_fields(
             {
-                "query": ct.c_char * 2048,
+                "query": ct.c_char * MAX_QUERY_LENGTH,
                 "instrument": instrument_type,
-                "search_path": ct.c_char * 1024,
+                "search_path": ct.c_char * MAX_SEARCHPATH_LENGTH,
             }
         )
         planstate_data.update_fields({"instrument": instrument_type})
@@ -493,10 +591,12 @@ class BPF_Collector:
             "SECS_PER_DAY": 86400,
             # TODO: make those configurable ?
             "MAX_QUERY_NUMBER": 10,
-            "MAX_QUERY_LENGTH": 2048,
+            "MAX_QUERY_LENGTH": MAX_QUERY_LENGTH,
             "MAX_STACK_READ": 4096,
-            "MAX_SEARCHPATH_LENGTH": 1024,
+            "MAX_SEARCHPATH_LENGTH": MAX_SEARCHPATH_LENGTH,
             "EVENTRING_PAGE_SIZE": 1024,
+            "MEMORY_REQUEST_MAXSIZE": MEMORY_REQUEST_MAXSIZE,
+            "MEMORY_PATH_SIZE": MEMORY_PATH_SIZE,
         }
 
         # USER_INSTRUMENT_FLAGS is defined only if the user wants to
@@ -533,6 +633,7 @@ class BPF_Collector:
                 ("Plan", "plan_rows"),
                 ("Plan", "plan_width"),
                 ("Plan", "parallel_aware"),
+                ("PlannedStmt", "queryId"),
                 ("PlanState", "instrument"),
                 ("PlanState", "plan"),
                 ("PlanState", "type"),
@@ -541,6 +642,7 @@ class BPF_Collector:
                 ("QueryDesc", "instrument_options"),
                 ("QueryDesc", "planstate"),
                 ("QueryDesc", "sourceText"),
+                ("QueryDesc", "plannedstmt"),
             )
         }
 
@@ -625,6 +727,14 @@ class BPF_Collector:
             for func in self.ExecEndFuncs:
                 self._attach_uprobe(func, "execendnode_enter")
         self.is_running = True
+        if self.options.enable_perf_events:
+            self.bpf.attach_perf_event(
+                ev_type=PerfType.SOFTWARE,
+                ev_config=PerfSWConfig.CPU_CLOCK,
+                fn_name=b"perf_event",
+                pid=self.pid,
+                sample_freq=300,
+            )
         background_thread = Thread(target=self.background_polling, args=(100,))
         background_thread.start()
         print("eBPF collector started")
@@ -650,8 +760,16 @@ class BPF_Collector:
         buf = ""
         if self.options.enable_nodes_collection:
             buf += load_c_file("plan.c")
+        if self.options.enable_perf_events:
+            buf += load_c_file("perf.c")
         buf += load_c_file("block_rq.c")
         return buf
+
+    def send_memory_request(self, request: memory_request) -> None:
+        """
+        Sends a memory request to the ebpf program.
+        """
+        self.bpf["memory_requests"].push(request)
 
     def prepare_bpf(self) -> BPF:
         """

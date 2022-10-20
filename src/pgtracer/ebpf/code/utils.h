@@ -35,21 +35,49 @@ static inline void fill_portal_data(void * queryDesc, struct portal_data_t* even
 	void *sourceText;
 	void *planstate;
 	void *instrument;
+	void *plannedStmt;
+	void *plan;
+	int ret;
+	event->queryAddr = (u64) queryDesc;
 	bpf_probe_read_user(&sourceText,
 						sizeof(void *),
 						OffsetFrom(queryDesc, QueryDesc, sourceText));
 	bpf_probe_read_user_str(&event->query,
 							MAX_QUERY_LENGTH,
 							(void *) sourceText);
-	bpf_probe_read_user(&planstate,
+	ret = bpf_probe_read_user(&plannedStmt,
+							  sizeof(void *),
+							  OffsetFrom(queryDesc, QueryDesc, plannedstmt));
+	if (plannedStmt && ret == 0)
+	{
+		bpf_probe_read_user(&event->query_id,
+							sizeof(u64),
+							OffsetFrom(plannedStmt, PlannedStmt, queryId));
+	}
+	ret = bpf_probe_read_user(&planstate,
 						sizeof(void *),
 						OffsetFrom(queryDesc, QueryDesc, planstate));
-	if (planstate)
+	if (planstate && ret == 0)
 	{
-		bpf_probe_read_user(&instrument,
+		ret = bpf_probe_read_user(&plan, sizeof(void *),
+								  OffsetFrom(planstate, PlanState, plan));
+		if (plan && ret == 0)
+		{
+			bpf_probe_read_user(&event->startup_cost,
+								sizeof(double),
+								OffsetFrom(plan, Plan, startup_cost));
+			bpf_probe_read_user(&event->total_cost,
+								sizeof(double),
+								OffsetFrom(plan, Plan, total_cost));
+			bpf_probe_read_user(&event->plan_rows,
+								sizeof(double),
+								OffsetFrom(plan, Plan, plan_rows));
+		}
+
+		ret = bpf_probe_read_user(&instrument,
 							sizeof(void *),
 							OffsetFrom(planstate, PlanState, instrument));
-		if (instrument)
+		if (instrument && ret == 0)
 		{
 			bpf_probe_read_user(&event->instrument,
 								STRUCT_SIZE_Instrumentation,
