@@ -27,13 +27,8 @@ jobs:
         run: |
           # Must be installed via the system
           sudo apt install python3-bpfcc python3-pip
-          pip install setuptools toml
-          # Install requirements from pyproject.toml
-          python -c 'import toml; open("requirements.txt.tmp", "w").write("\n".join(toml.load(open("pyproject.toml"))["project"]["dependencies"]) + "\n")'
-          # Install lint requirements
-          python -c 'import toml; open("requirements.txt.tmp", "a").write("\n".join(toml.load(open("pyproject.toml"))["project"]["optional-dependencies"]["lint"]) + "\n")'
-          pip install -r requirements.txt.tmp
-          python -c "import bcc; print(bcc.__file__)"
+          pip install -U pip toml
+          pip install '.[lint]'
 
       - id: pylint
         run: pylint --rcfile .pylintrc src/ || pylint-exit $? -efail

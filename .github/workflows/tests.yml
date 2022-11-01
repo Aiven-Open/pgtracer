@@ -44,18 +44,14 @@ jobs:
           sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-${{ matrix.repo }} main ${{ matrix.postgresql_version }}" > /etc/apt/sources.list.d/pgdg.list'
           sudo apt update
           sudo apt install postgresql-${{matrix.postgresql_version}} postgresql-${{matrix.postgresql_version}}-dbgsym
-          sudo pip install setuptools toml
-
+          sudo pip install -U pip toml
           # Install requirements from pyproject.toml
-          python -c 'import toml; open("requirements.txt.tmp", "w").write("\n".join(toml.load(open("pyproject.toml"))["project"]["dependencies"]) + "\n")'
-          # Install lint requirements
-          python -c 'import toml; open("requirements.txt.tmp", "a").write("\n".join(toml.load(open("pyproject.toml"))["project"]["optional-dependencies"]["lint"]) + "\n")'
-          sudo pip install -r requirements.txt.tmp
+          sudo pip install '.[test]'
           python -c "import bcc; print(bcc.__file__)"
 
       - id: tests
         run: |
-          sudo PYTHONPATH=$(pwd)/src pytest --postgresql-exec /usr/lib/postgresql/${{matrix.postgresql_version}}/bin/pg_ctl --cov --cov-report=xml
+          sudo pytest --postgresql-exec /usr/lib/postgresql/${{matrix.postgresql_version}}/bin/pg_ctl --cov --cov-report=xml
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v3
@@ -85,15 +81,12 @@ jobs:
           sudo apt install python3-bpfcc python3-pip libunwind-dev linux-headers-$(uname -r)
           # Also install it in the host, for the tests running outside the
           # container
-          sudo pip install setuptools toml
-          python -c 'import toml; open("requirements.txt.tmp", "w").write("\n".join(toml.load(open("pyproject.toml"))["project"]["dependencies"]) + "\n")'
-          # Install lint requirements
-          python -c 'import toml; open("requirements.txt.tmp", "a").write("\n".join(toml.load(open("pyproject.toml"))["project"]["optional-dependencies"]["lint"]) + "\n")'
-          sudo pip install -r requirements.txt.tmp
+          sudo pip install -U pip toml
+          sudo pip install '.[test]'
 
       - id: fedora_tests
         run: |
-          sudo PYTHONPATH=$(pwd)/src pytest --postgresql-host 172.16.0.1 --container fedora --cov --cov-report=xml
+          sudo pytest --postgresql-host 172.16.0.1 --container fedora --cov --cov-report=xml
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v3
