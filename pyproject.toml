@@ -27,9 +27,12 @@ lint = [
   'black',
   'isort',
   'mypy',
-  'psycopg',
   'pylint',
   'pylint-exit',
+]
+
+test = [
+  'psycopg',
   'pytest',
   'pytest-coverage',
   'pytest-postgresql',
