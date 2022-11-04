@@ -114,13 +114,20 @@ def main() -> None:
         help="""Instrument flags to set. (warning: writes into backends
         memory!)""",
     )
-    parser.add_argument("--nodes-collection", "-n", default=False, action="store_true")
+    parser.add_argument(
+        "--nodes-collection",
+        "-n",
+        default=False,
+        action="store_true",
+        help="""Collect information about individual execution nodes""",
+    )
 
     args = parser.parse_args()
     pid = args.pid
     instrument_flags = 0
-    for flag in args.instrument:
-        instrument_flags |= InstrumentationFlags[flag]
+    if args.instrument:
+        for flag in args.instrument:
+            instrument_flags |= InstrumentationFlags[flag]
     options = CollectorOptions(
         instrument_flags=instrument_flags,
         enable_nodes_collection=args.nodes_collection,
