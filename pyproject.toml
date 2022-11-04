@@ -7,7 +7,6 @@ authors = [
 ]
 dependencies = [
     "pyelftools",
-    "bcc",
     "psutil"
 ]
 readme = "README.md"
