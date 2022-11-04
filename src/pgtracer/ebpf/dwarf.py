@@ -147,10 +147,15 @@ def find_debuginfo(
         return elf_file
 
     debug_dir = root / Path("usr/lib/debug")
+    debuginfod_dir = Path("~/.cache/debuginfod_client").expanduser()
     # Try to locate it using build-id
     if buildid:
         prefix, rest = buildid[:2], buildid[2:]
         debug_file = debug_dir / ".build-id" / prefix / (rest + ".debug")
+        if debug_file.exists():
+            return ELFFile.load_from_path(bytes(debug_file))
+        # Try it for debuginfod format
+        debug_file = debuginfod_dir / buildid / "debuginfo"
         if debug_file.exists():
             return ELFFile.load_from_path(bytes(debug_file))
     # Ok, try to locate it using debuglink then.
