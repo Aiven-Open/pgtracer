@@ -14,13 +14,13 @@ from enum import IntEnum
 from pathlib import Path
 from threading import Thread
 from time import sleep
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 
 from bcc import BPF, PerfSWConfig, PerfType
 from psutil import Process
 
 from ..model import Query
-from .dwarf import ProcessMetadata
+from .dwarf import DWARFPointer, ProcessMetadata, Struct, get_size
 from .unwind import stack_data_t
 
 
@@ -283,21 +283,8 @@ class EventHandler:
             # FIXME: this should go to a helper method, taking the
             # full path in C notation
             reqId = self.nextRequestId = self.nextRequestId + 1
-            mempath_length = 3
-            memory_path = (ct.c_ulonglong * MEMORY_PATH_SIZE)()
-            memory_path[0] = (
-                event.query_addr
-                + structs.QueryDesc.field_definition("planstate").offset  # type:ignore
-            )
-            memory_path[1] = structs.PlanState.field_definition(
-                "instrument"
-            ).offset  # type:ignore
-            memory_path[2] = 0
-            request = memory_request(
-                requestId=reqId,
-                path_size=mempath_length,
-                size=structs.Instrumentation.size(),
-                memory_path=memory_path,
+            request = bpf_collector.build_memory_request(
+                reqId, event.query_addr, structs.QueryDesc, ["planstate", "instrument"]
             )
             self.current_query_requests[reqId] = request
             bpf_collector.send_memory_request(request)
@@ -438,11 +425,17 @@ class EventHandler:
         """
         ev = ct.cast(event, ct.POINTER(memory_response)).contents
         request = self.current_query_requests.pop(ev.requestId, None)
-        if request and self.current_executor:
+        if not self.current_executor:
+            return 0
+        # We have a memory response for the whole query
+        if request is not None:
             query = self.query_cache.get(self.current_executor, None)
             if query:
                 instr = bpf_collector.metadata.structs.Instrumentation(ev.payload_addr)
                 query.instrument = instr
+                # Load all fields from the underlying memory.
+                instr.as_dict(include_all=True)
+
                 self.current_query_requests[ev.requestId] = request
                 bpf_collector.send_memory_request(request)
         return 0
@@ -764,6 +757,51 @@ class BPF_Collector:
             buf += load_c_file("perf.c")
         buf += load_c_file("block_rq.c")
         return buf
+
+    def build_memory_request(
+        self,
+        requestId: int,
+        base_addr: int,
+        base_type: Type[Union[ct._CData, Struct, DWARFPointer]],
+        path: List[str],
+    ) -> memory_request:
+        """
+        Build a memory request from a requestId, a base_addr, a known base_type living at this addr and a path
+        describing which fields to follow to the final memory location.
+
+        The fields definitions are extracted from the debug symbols.
+        """
+        memory_path = (ct.c_ulonglong * MEMORY_PATH_SIZE)()
+        # We have the base address, the path, and finally an offset 0 to read the memory itself.
+        mempath_length = len(path) + 1
+        assert mempath_length <= MEMORY_PATH_SIZE
+        memory_path[0] = base_addr
+        current_type = base_type
+        current_idx = 0
+        for part in path:
+            # If we follow a pointer, add a new item to the underlying path.
+            # Otherwise, just add to the previous type.
+            if issubclass(current_type, DWARFPointer):
+                current_type = current_type.pointed_type
+                current_idx += 1
+                memory_path[current_idx] = 0
+            if issubclass(current_type, Struct):
+                attr = current_type.field_definition(part)
+                if attr is None:
+                    raise AttributeError(f"Type {current_type} has no field {attr}")
+                current_type = attr.member_type
+                memory_path[current_idx] += attr.offset
+            else:
+                raise AttributeError(
+                    f"Cannot dereference field {part} from type {current_type}"
+                )
+        size = get_size(current_type, dereference=True)
+        return memory_request(
+            requestId=requestId,
+            path_size=mempath_length,
+            size=size,
+            memory_path=memory_path,
+        )
 
     def send_memory_request(self, request: memory_request) -> None:
         """
