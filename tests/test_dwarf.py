@@ -8,7 +8,12 @@ from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
 
-from pgtracer.ebpf.dwarf import ProcessMetadata, Struct, StructMemberDefinition
+from pgtracer.ebpf.dwarf import (
+    DWARFPointer,
+    ProcessMetadata,
+    Struct,
+    StructMemberDefinition,
+)
 from pgtracer.ebpf.eh_frame_hdr import EhFrameHdr
 
 TEST_BINARY = Path(__file__).parent / "test_bins" / "test.elf"
@@ -68,7 +73,8 @@ class TestProcessMetadata(TestCase):
 
         a_charp = StructA.field_definition("a_charp")
         self.assertEqual(a_charp.offset, 8)
-        self.assertEqual(a_charp.member_type, ct.c_void_p)
+        self.assertTrue(issubclass(a_charp.member_type, ct._Pointer))
+        self.assertEqual(a_charp.member_type._type_, ct.c_byte)
 
         StructB = structs.StructB  # pylint: disable=invalid-name
 
@@ -78,11 +84,13 @@ class TestProcessMetadata(TestCase):
 
         b_structap = StructB.field_definition("b_structap")
         self.assertEqual(b_structap.offset, StructA.size())
-        self.assertEqual(b_structap.member_type, ct.c_void_p)
+        self.assertTrue(issubclass(b_structap.member_type, DWARFPointer))
+        self.assertEqual(b_structap.member_type.pointed_type, StructA)
 
         b_structbp = StructB.field_definition("b_structbp")
         self.assertEqual(b_structbp.offset, StructA.size() + 8)
-        self.assertEqual(b_structbp.member_type, ct.c_void_p)
+        self.assertTrue(issubclass(b_structbp.member_type, DWARFPointer))
+        self.assertEqual(b_structbp.member_type.pointed_type, StructB)
 
     def test_eh_frame_hdr(self):
         """

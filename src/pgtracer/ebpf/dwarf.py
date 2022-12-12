@@ -133,6 +133,22 @@ def extract_buildid(elffile: ELFFile) -> Optional[str]:
     return None
 
 
+def get_size(
+    to_size: Type[Union[Struct, ct._CData, DWARFPointer]], dereference: bool = True
+) -> int:
+    """
+    Returns the size of a type.
+    """
+    if issubclass(to_size, Struct):
+        return to_size.size()
+    elif issubclass(to_size, DWARFPointer):
+        if dereference:
+            return get_size(to_size.pointed_type)
+        return ct.sizeof(ct.c_void_p)
+    else:
+        return ct.sizeof(to_size)
+
+
 def find_debuginfo(
     elf_file: ELFFile, root: Path = Path("/"), buildid: Optional[str] = None
 ) -> Optional[ELFFile]:
@@ -414,7 +430,10 @@ class StructMemberDefinition:
     """
 
     def __init__(
-        self, name: str, member_type: Type[Union[_CData, Struct]], offset: int
+        self,
+        name: str,
+        member_type: Type[Union[_CData, Struct, DWARFPointer]],
+        offset: int,
     ):
         self.name = name
         self.member_type = member_type
@@ -426,11 +445,22 @@ class StructMemberDefinition:
         """
         addr = buffer_addr + self.offset
 
-        if issubclass(self.member_type, Struct):
+        if issubclass(self.member_type, (Struct, DWARFPointer)):
             return self.member_type(addr)
         value = self.member_type()
         ct.pointer(value)[0] = self.member_type.from_address(addr)
         return value
+
+
+class DWARFPointer:
+    """
+    Represents a typed Pointer.
+    """
+
+    pointed_type: Type[Union[_CData, Struct, DWARFPointer]]
+
+    def __init__(self, pointed: int):
+        self.pointed = pointed
 
 
 class Struct:
@@ -455,6 +485,47 @@ class Struct:
         cls.fields_defs = {}
 
     @classmethod
+    def _get_type(
+        cls, die: DIE
+    ) -> Union[Type[_CData], Type[Struct], Type[DWARFPointer]]:
+        typedie = die.get_DIE_from_attribute("DW_AT_type")
+        while typedie.tag == "DW_TAG_typedef":
+            typedie = typedie.get_DIE_from_attribute("DW_AT_type")
+        typename = die_name(typedie)
+        dtype: Optional[Union[Type[Struct], Type[_CData], Type[DWARFPointer]]] = None
+        if typedie.tag == "DW_TAG_base_type":
+            # Ignore the invalid assignation to None, since
+            # an error is raised just below
+            dtype = BaseTypes.get(typename)  # type: ignore
+            if dtype is None:
+                raise KeyError(f"Unsupported base type {typename}")
+        elif typedie.tag == "DW_TAG_structure_type":
+            assert typename is not None
+            dtype = getattr(cls.metadata.structs, typename)
+            if dtype is None:
+                raise KeyError(f"Unknown struct named {typename}")
+        elif typedie.tag == "DW_TAG_pointer_type":
+            # Look up the type this points to.
+            pointed_type = cls._get_type(typedie)
+            if issubclass(pointed_type, Struct):
+                dtype = pointed_type.pointer_type()
+            elif issubclass(pointed_type, DWARFPointer):
+                raise NotImplementedError("We don't support pointers to pointers yet")
+            elif issubclass(pointed_type, _CData):
+                dtype = ct.POINTER(pointed_type)
+            else:
+                raise NotImplementedError(
+                    f"No idea how to get a pointer to {pointed_type}"
+                )
+        elif typedie.tag == "DW_TAG_enumeration_type":
+            dtype = ct.c_int
+        elif typedie.tag == "DW_TAG_const_type":
+            dtype = cls._get_type(typedie)
+        else:
+            raise ValueError(f"Did not expect type with {typedie.tag}")
+        return dtype
+
+    @classmethod
     def _load_fields(cls, filter_fn: Optional[Callable[[DIE], bool]] = None) -> None:
         for child in cls.die.iter_children():
             if filter_fn is None or filter_fn(child):
@@ -462,31 +533,8 @@ class Struct:
                 if attrname is None:
                     continue
                 offset = get_location(child)
-                typedie = child.get_DIE_from_attribute("DW_AT_type")
-
-                while typedie.tag == "DW_TAG_typedef":
-                    typedie = typedie.get_DIE_from_attribute("DW_AT_type")
+                child_type = cls._get_type(child)
                 # Ok, now figure out what to do with the type.
-                typename = die_name(typedie)
-                child_type: Optional[Union[Type[Struct], Type[_CData]]] = None
-                if typedie.tag == "DW_TAG_base_type":
-                    # Ignore the invalid assignation to None, since
-                    # an error is raised just below
-                    child_type = BaseTypes.get(typename)  # type: ignore
-
-                    if child_type is None:
-                        raise KeyError(f"Unsupported base type {typename}")
-                elif typedie.tag == "DW_TAG_structure_type":
-                    assert typename is not None
-                    child_type = getattr(cls.metadata.structs, typename)
-                    if child_type is None:
-                        raise KeyError(f"Unknown struct named {typename}")
-                elif typedie.tag == "DW_TAG_pointer_type":
-                    child_type = ct.c_void_p
-                elif typedie.tag == "DW_TAG_enumeration_type":
-                    child_type = ct.c_int
-                else:
-                    raise ValueError(f"Did not expect type with {typedie.tag}")
                 cls.fields_defs[attrname] = StructMemberDefinition(
                     attrname, child_type, offset
                 )
@@ -542,7 +590,7 @@ class Struct:
         if include_all:
             self.load_all_definitions()
         values = {}
-        for attrname in self.fields_defs.keys():
+        for attrname in self.fields_defs:
             value = getattr(self, attrname)
             values[attrname] = value
         return values
@@ -555,6 +603,18 @@ class Struct:
         size = cls.die.attributes["DW_AT_byte_size"].value
         assert isinstance(size, int)
         return size
+
+    @classmethod
+    def pointer_type(cls) -> Type[DWARFPointer]:
+        """
+        Returns the pointer type pointing to this struct, creating it if it doesn't exists.
+        """
+        pointer_type = cls.metadata.pointer_types.get(cls)
+        if pointer_type is not None:
+            return pointer_type
+        pointer_type = type(f"{cls.__name__}_p", (DWARFPointer,), {"pointed_type": cls})
+        cls.metadata.pointer_types[cls] = pointer_type
+        return pointer_type
 
 
 class Structs:
@@ -623,6 +683,7 @@ class ProcessMetadata:
         self.naive_index: Dict[str, Dict[str, Set[Tuple[int, int]]]] = defaultdict(
             lambda: defaultdict(set)
         )
+        self.pointer_types: Dict[type, type] = {}
         self.symtab = self.elffile.get_section_by_name(".symtab")
         if gdb_index_section is not None:
             self.gdb_index = GDBIndex(gdb_index_section, self.dwarf_info)
