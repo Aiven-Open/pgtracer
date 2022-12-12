@@ -70,7 +70,7 @@ def test_instrumentation(bpfcollector_instrumented, connection):
     assert 0 <= query.shared_buffers_hitratio < 100
     # The syscache_hitratio can be negative, when we actually end up reading
     # more blocks than what is accounted for by instrumentation.
-    assert query.syscache_hitratio < 100
+    assert query.syscache_hitratio <= 100
 
     # Check that we don't crash without any instrumentation whatshowever
     query.instrument = None
