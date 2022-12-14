@@ -240,6 +240,7 @@ class EventHandler:
         self.last_portal_key: Optional[Tuple[int, int]] = None
         self.current_executor: Optional[Tuple[int, int]] = None
         self.current_query_requests: Dict[int, memory_request] = {}
+        self.current_node_requests: Dict[int, Tuple[memory_request, int]] = {}
         self.nextRequestId = 0
 
     def handle_event(self, bpf_collector: BPF_Collector, event: ct._CData) -> int:
@@ -366,6 +367,16 @@ class EventHandler:
             # We don't know this query: maybe it started running before us ?
             return 0
         query.add_node_from_event(bpf_collector.metadata, event)
+        if bpf_collector.options.enable_perf_events:
+            reqId = self.nextRequestId = self.nextRequestId + 1
+            request = bpf_collector.build_memory_request(
+                reqId,
+                event.planstate_addr,
+                bpf_collector.metadata.structs.PlanState,
+                ["instrument"],
+            )
+            self.current_node_requests[reqId] = (request, event.planstate_addr)
+            bpf_collector.send_memory_request(request)
         return 0
 
     def handle_ExecEndNode(self, bpf_collector: BPF_Collector, event: ct._CData) -> int:
@@ -438,6 +449,21 @@ class EventHandler:
 
                 self.current_query_requests[ev.requestId] = request
                 bpf_collector.send_memory_request(request)
+            return 0
+        request, nodeid = self.current_node_requests.pop(ev.requestId, (None, None))
+        # We have a memory response for an individual node
+        if request is not None:
+            query = self.query_cache.get(self.current_executor, None)
+            if query is not None and nodeid is not None:
+                node = query.nodes.get(nodeid)
+                if node is not None:
+                    instr = bpf_collector.metadata.structs.Instrumentation(
+                        ev.payload_addr
+                    )
+                    node.instrument = instr
+                    self.current_node_requests[ev.requestId] = (request, nodeid)
+                    bpf_collector.send_memory_request(request)
+                return 0
         return 0
 
 
@@ -726,7 +752,7 @@ class BPF_Collector:
                 ev_config=PerfSWConfig.CPU_CLOCK,
                 fn_name=b"perf_event",
                 pid=self.pid,
-                sample_freq=300,
+                sample_freq=600,
             )
         background_thread = Thread(target=self.background_polling, args=(100,))
         background_thread.start()
