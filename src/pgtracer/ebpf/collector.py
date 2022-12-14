@@ -255,11 +255,7 @@ class EventHandler:
         event_type_name = EventType(event_type).name
         method_name = f"handle_{event_type_name}"
         method: Callable[[BPF_Collector, ct._CData], int] = getattr(self, method_name)
-
-        if method:
-            return method(bpf_collector, event)
-
-        return 0
+        return method(bpf_collector, event)
 
     def handle_ExecutorRun(self, bpf_collector: BPF_Collector, event: ct._CData) -> int:
         """
