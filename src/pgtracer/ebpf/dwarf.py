@@ -141,12 +141,11 @@ def get_size(
     """
     if issubclass(to_size, Struct):
         return to_size.size()
-    elif issubclass(to_size, DWARFPointer):
+    if issubclass(to_size, DWARFPointer):
         if dereference:
             return get_size(to_size.pointed_type)
         return ct.sizeof(ct.c_void_p)
-    else:
-        return ct.sizeof(to_size)
+    return ct.sizeof(to_size)
 
 
 def find_debuginfo(
