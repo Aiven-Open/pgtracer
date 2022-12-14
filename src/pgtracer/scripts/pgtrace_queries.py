@@ -81,18 +81,32 @@ def print_query(query: Query, options: CollectorOptions) -> None:
         print(query.root_node.explain())
 
 
-def print_running_query(query: Query, first_time: bool) -> None:
+LINE_UP = "\033[1A"
+LINE_CLEAR = "\x1b[2K"
+
+
+def print_running_query(
+    query: Query, print_plan: bool, first_time: bool, clear_line: int = 0
+) -> int:
     """
     Print the currently running query.
     """
+    nb_lines = 0
     if first_time:
         print("Currently running:")
         print(query.text)
-        print("Tuples produced / tuple expected")
-        print("")
-    print("\x1b[1A", end="")
-    print("\x1b[2K", end="")
-    print(f"{int(query.instrument.tuplecount.value)} / {int(query.plan_rows)}")
+        if not print_plan:
+            print("Tuples produced / tuple expected")
+            print("")
+    for i in range(clear_line):
+        print(LINE_UP, end=LINE_CLEAR)
+    if print_plan:
+        plan = query.root_node.explain()
+        nb_lines = len(plan.split("\n"))
+        print(plan)
+    else:
+        print(f"{int(query.instrument.tuplecount.value)} / {int(query.plan_rows)}")
+    return nb_lines
 
 
 def main() -> None:
@@ -137,13 +151,19 @@ def main() -> None:
     collector.start()
     total_queries = 0
     last_running_query = None
+    lines_to_clear = 0
     while True:
         try:
             time.sleep(1)
             if not collector.event_handler.query_history and collector.current_query:
-                print_running_query(
+                first_time = last_running_query is not collector.current_query
+                if first_time:
+                    lines_to_clear = 0
+                lines_to_clear = print_running_query(
                     collector.current_query,
+                    options.enable_nodes_collection,
                     last_running_query is not collector.current_query,
+                    lines_to_clear,
                 )
                 last_running_query = collector.current_query
                 continue
