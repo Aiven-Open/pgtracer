@@ -792,8 +792,8 @@ class BPF_Collector:
         path: List[str],
     ) -> memory_request:
         """
-        Build a memory request from a requestId, a base_addr, a known base_type living at this addr and a path
-        describing which fields to follow to the final memory location.
+        Build a memory request from a requestId, a base_addr, a known base_type living
+        at this addr and a path describing which fields to follow to the final memory location.
 
         The fields definitions are extracted from the debug symbols.
         """

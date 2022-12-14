@@ -98,7 +98,7 @@ def print_running_query(
         if not print_plan:
             print("Tuples produced / tuple expected")
             print("")
-    for i in range(clear_line):
+    for _ in range(clear_line):
         print(LINE_UP, end=LINE_CLEAR)
     if print_plan:
         plan = query.root_node.explain()
