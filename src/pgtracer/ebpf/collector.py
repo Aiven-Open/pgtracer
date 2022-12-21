@@ -327,8 +327,8 @@ class EventHandler:
         already present at the query start.
         """
         if bpf_collector.options.enable_perf_events:
-            bpf_collector.bpf["discovery_enabled"][ct.c_int(1)] = ct.c_bool(False)
-            bpf_collector.bpf["discovery_enabled"][ct.c_int(2)] = ct.c_bool(False)
+            bpf_collector.bpf[b"discovery_enabled"][ct.c_int(1)] = ct.c_bool(False)
+            bpf_collector.bpf[b"discovery_enabled"][ct.c_int(2)] = ct.c_bool(False)
         event = ct.cast(event, ct.POINTER(portal_data)).contents
         return self._process_portal_data(bpf_collector, event)
 
@@ -571,7 +571,7 @@ class EventHandler:
         _, creation_time = ev.portal_data.portal_key.as_tuple()
         if creation_time:
             self._process_portal_data(bpf_collector, ev.portal_data)
-        bpf_collector.bpf["discovery_enabled"][ct.c_int(1)] = ct.c_bool(False)
+        bpf_collector.bpf[b"discovery_enabled"][ct.c_int(1)] = ct.c_bool(False)
         if bpf_collector.current_query:
             # Now add the nodes from the stacktrace
             bpf_collector.current_query.add_nodes_from_stack(
@@ -961,7 +961,7 @@ class BPF_Collector:
         """
         Sends a memory request to the ebpf program.
         """
-        self.bpf["memory_requests"].push(request)
+        self.bpf[b"memory_requests"].push(request)
 
     def prepare_bpf(self) -> BPF:
         """
@@ -983,10 +983,10 @@ class BPF_Collector:
         bpf = BPF(text=buf.encode("utf8"), cflags=cflags, debug=0)
         # FIXME: get rid of those magic numbers.
         if self.options.enable_perf_events:
-            bpf["discovery_enabled"][ct.c_int(1)] = ct.c_bool(
+            bpf[b"discovery_enabled"][ct.c_int(1)] = ct.c_bool(
                 self.options.enable_query_discovery
             )
-            bpf["discovery_enabled"][ct.c_int(2)] = ct.c_bool(
+            bpf[b"discovery_enabled"][ct.c_int(2)] = ct.c_bool(
                 self.options.enable_query_discovery
             )
         return bpf
