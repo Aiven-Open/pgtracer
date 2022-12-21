@@ -100,7 +100,7 @@ def print_running_query(
             print("")
     for _ in range(clear_line):
         print(LINE_UP, end=LINE_CLEAR)
-    if print_plan:
+    if print_plan and query.root_node:
         plan = query.root_node.explain()
         nb_lines = len(plan.split("\n"))
         print(plan)

@@ -747,7 +747,7 @@ class UnwindAddressSpace:
         ip = self.ip()
         region = self.processmetadata.map_for_addr(ip)
         if region is None:
-            raise ValueError("This frame could not be associated to a region.")
+            return (None,)
         if region.path == str(self.processmetadata.program_raw):
             dies = self.processmetadata.get_die_and_inlined_subdies_for_addr(
                 ip - region.start
