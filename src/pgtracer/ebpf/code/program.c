@@ -26,7 +26,7 @@ int executorrun_enter(struct pt_regs *ctx)
 	bpf_probe_read_user(&portaladdr,
 						sizeof(void*),
 						(void *) GlobalVariablesActivePortal);
-	struct portal_key_t key = get_portal_key(portaladdr);
+	Id128 key = get_portal_key(portaladdr);
 	event = event_ring.ringbuf_reserve(sizeof(struct portal_data_t));
 	if (!event)
 		return 1;
@@ -45,7 +45,7 @@ int executorfinish_enter(struct pt_regs *ctx)
 	void *portal;
 	void *queryDesc = (void *) PT_REGS_PARM1(ctx);
 	struct portal_data_t *event;
-	struct portal_key_t key;
+	Id128 key;
 	bpf_probe_read_user(&portal,
 						sizeof(void*),
 						(void *) GlobalVariablesActivePortal);
@@ -65,7 +65,7 @@ int executorfinish_enter(struct pt_regs *ctx)
 int portaldrop_return(struct pt_regs *ctx)
 {
 	struct portal_data_t *event;
-	struct portal_key_t key = {0};
+	Id128 key = {0};
 	event = event_ring.ringbuf_reserve(sizeof(struct portal_data_t));
 	if (!event)
 		return 1;
@@ -79,7 +79,7 @@ int portaldrop_return(struct pt_regs *ctx)
 int portaldrop_enter(struct pt_regs *ctx)
 {
 	void *portal =  (void *) PT_REGS_PARM1(ctx);
-	struct portal_key_t key = get_portal_key(portal);
+	Id128 key = get_portal_key(portal);
 	struct portal_data_t *event;
 	void *queryDesc;
 	event = event_ring.ringbuf_reserve(sizeof(struct portal_data_t));

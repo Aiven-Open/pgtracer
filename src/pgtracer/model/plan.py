@@ -27,7 +27,7 @@ class PlanState:
     Information collected from a PostgreSQL PlanState Node.
     """
 
-    def __init__(self, addr: int):
+    def __init__(self, addr: Optional[int]):
         self.addr = addr
         self.tag: Optional[IntEnum] = None
         self.instrument: Optional[Struct] = None

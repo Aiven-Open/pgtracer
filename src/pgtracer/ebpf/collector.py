@@ -19,7 +19,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 from bcc import BPF, PerfSWConfig, PerfType
 from psutil import Process
 
-from ..model import Query
+from ..model import PlanState, Query
 from .dwarf import DWARFPointer, ProcessMetadata, Struct, get_size
 from .unwind import stack_data_t
 
@@ -61,6 +61,41 @@ def load_c_file(filename: str) -> str:
         return cfile.read()
 
 
+class Id128(ct.Structure):
+    """
+    Structure containing two u64, to be used as either a single 8-bytes int or a two 8-bytes tuple.
+    """
+
+    _fields_ = [("u1", ct.c_ulonglong), ("u2", ct.c_ulonglong)]
+
+    @classmethod
+    def from_int(cls, intvalue: int) -> Id128:
+        """
+        Create an Id128 from a single integer.
+        """
+        return cls(intvalue, 0)
+
+    def as_int(self) -> int:
+        """
+        Interpret an Id128 as a single integer.
+        """
+        val: int = self.u1
+        return val
+
+    @classmethod
+    def from_tuple(cls, inttuple: Tuple[int, int]) -> Id128:
+        """
+        Create an Id128 from a two-ints tuple.
+        """
+        return cls(*inttuple)
+
+    def as_tuple(self) -> Tuple[int, int]:
+        """
+        Interpret an Id128 as a two-int tuple.
+        """
+        return (self.u1, self.u2)
+
+
 # pylint: disable=invalid-name
 class EventType(IntEnum):
     """
@@ -74,23 +109,10 @@ class EventType(IntEnum):
     ExecProcNodeFirst = 5
     ExecEndNode = 6
     KBlockRqIssue = 7
-    MemoryResponse = 8
-
-
-class portal_key(ct.Structure):
-    """
-    Maps the EBPF-defined struct "portal_key".
-    This struct acts a key for a given portal instance, identified by it's pid
-    and creation_time.
-    """
-
-    _fields_ = [("pid", ct.c_ulong), ("creation_time", ct.c_ulong)]
-
-    def as_tuple(self) -> Tuple[int, int]:
-        """
-        Returns the struct as tuple.
-        """
-        return self.pid, self.creation_time
+    MemoryResponseQueryInstr = 8
+    MemoryResponseNodeInstr = 9
+    MemoryNodeData = 10
+    StackSample = 11
 
 
 instrument_type = ct.c_byte * 0
@@ -132,7 +154,7 @@ class portal_data(StubStructure):
 
     _protofields = [
         ("event_type", ct.c_short),
-        ("portal_key", portal_key),
+        ("portal_key", Id128),
         ("query_addr", ct.c_ulonglong),
         ("query_id", ct.c_ulonglong),
         ("startup_cost", ct.c_double),
@@ -179,9 +201,11 @@ class planstate_data(StubStructure):
 
     _protofields = [
         ("event_type", ct.c_short),
-        ("portal_key", portal_key),
+        ("portal_key", Id128),
         ("planstate_addr", ct.c_ulonglong),
         ("planstate_tag", ct.c_int),
+        ("lefttree", ct.c_ulonglong),
+        ("righttree", ct.c_ulonglong),
         ("plan_data", plan_data),
         ("instrument", instrument_type),
         ("stack_capture", stack_data_t),
@@ -198,7 +222,8 @@ class memory_request(ct.Structure):
     """
 
     _fields_ = [
-        ("requestId", ct.c_int),
+        ("event_type", ct.c_short),
+        ("requestId", Id128),
         ("path_size", ct.c_int),
         ("size", ct.c_ulonglong),
         ("memory_path", ct.c_ulonglong * MEMORY_PATH_SIZE),
@@ -212,7 +237,7 @@ class memory_response(ct.Structure):
 
     _fields_ = [
         ("event_type", ct.c_short),
-        ("requestId", ct.c_int),
+        ("requestId", Id128),
         ("payload", ct.c_char * MEMORY_REQUEST_MAXSIZE),
     ]
 
@@ -223,6 +248,14 @@ class memory_response(ct.Structure):
         own struct.
         """
         return ct.addressof(self) + memory_response.payload.offset
+
+
+class stack_sample(StubStructure):
+    """
+    Represents a stack sample, sent back from the perf event handler.
+    """
+
+    _protofields = [("portal_data", portal_data), ("stack_data", stack_data_t)]
 
 
 class EventHandler:
@@ -239,8 +272,6 @@ class EventHandler:
         self.query_history: List[Query] = []
         self.last_portal_key: Optional[Tuple[int, int]] = None
         self.current_executor: Optional[Tuple[int, int]] = None
-        self.current_query_requests: Dict[int, memory_request] = {}
-        self.current_node_requests: Dict[int, Tuple[memory_request, int]] = {}
         self.nextRequestId = 0
 
     def handle_event(self, bpf_collector: BPF_Collector, event: ct._CData) -> int:
@@ -257,18 +288,16 @@ class EventHandler:
         method: Callable[[BPF_Collector, ct._CData], int] = getattr(self, method_name)
         return method(bpf_collector, event)
 
-    def handle_ExecutorRun(self, bpf_collector: BPF_Collector, event: ct._CData) -> int:
+    def _process_portal_data(
+        self, bpf_collector: BPF_Collector, event: portal_data
+    ) -> int:
         """
-        Handle ExecutorRun event. This event is produced by an uprobe on
-        standard_ExecutorRun. See executorstart_enter in program.c.
-
-        We record the fact that a query started, extracting relevant metadata
-        already present at the query start.
+        Process the portal data. This is used both when a query starts, and when we see
+        the first live query during query discovery.
         """
-        event = ct.cast(event, ct.POINTER(portal_data)).contents
         key = event.portal_key.as_tuple()
         self.current_executor = event.portal_key.as_tuple()
-        self.current_query_requests = {}
+
         if key not in self.query_cache:
             self.query_cache[key] = Query.from_event(bpf_collector.metadata, event)
         else:
@@ -279,13 +308,29 @@ class EventHandler:
             structs = bpf_collector.metadata.structs
             # FIXME: this should go to a helper method, taking the
             # full path in C notation
-            reqId = self.nextRequestId = self.nextRequestId + 1
             request = bpf_collector.build_memory_request(
-                reqId, event.query_addr, structs.QueryDesc, ["planstate", "instrument"]
+                EventType.MemoryResponseQueryInstr,
+                event.portal_key,
+                event.query_addr,
+                structs.QueryDesc,
+                ["planstate", "instrument"],
             )
-            self.current_query_requests[reqId] = request
             bpf_collector.send_memory_request(request)
         return 0
+
+    def handle_ExecutorRun(self, bpf_collector: BPF_Collector, event: ct._CData) -> int:
+        """
+        Handle ExecutorRun event. This event is produced by an uprobe on
+        standard_ExecutorRun. See executorstart_enter in program.c.
+
+        We record the fact that a query started, extracting relevant metadata
+        already present at the query start.
+        """
+        if bpf_collector.options.enable_perf_events:
+            bpf_collector.bpf["discovery_enabled"][ct.c_int(1)] = ct.c_bool(False)
+            bpf_collector.bpf["discovery_enabled"][ct.c_int(2)] = ct.c_bool(False)
+        event = ct.cast(event, ct.POINTER(portal_data)).contents
+        return self._process_portal_data(bpf_collector, event)
 
     def handle_ExecutorFinish(
         self, bpf_collector: BPF_Collector, event: ct._CData
@@ -298,7 +343,6 @@ class EventHandler:
         if self.current_executor:
             self.current_executor = None
             bpf_collector.current_query = None
-        self.current_query_requests = {}
         if key in self.query_cache:
             self.query_cache[event.portal_key.as_tuple()].update(
                 bpf_collector.metadata, event
@@ -364,14 +408,13 @@ class EventHandler:
             return 0
         query.add_node_from_event(bpf_collector.metadata, event)
         if bpf_collector.options.enable_perf_events:
-            reqId = self.nextRequestId = self.nextRequestId + 1
             request = bpf_collector.build_memory_request(
-                reqId,
+                EventType.MemoryResponseNodeInstr,
+                Id128.from_int(event.planstate_addr),
                 event.planstate_addr,
                 bpf_collector.metadata.structs.PlanState,
                 ["instrument"],
             )
-            self.current_node_requests[reqId] = (request, event.planstate_addr)
             bpf_collector.send_memory_request(request)
         return 0
 
@@ -422,44 +465,122 @@ class EventHandler:
             query.io_counters["W"] += event.bytes
         return 0
 
-    def handle_MemoryResponse(
+    def handle_MemoryResponseQueryInstr(
         self, bpf_collector: BPF_Collector, event: ct._CData
     ) -> int:
         """
-        Handle MemoryResponse event.
+        Handle MemoryResponseQueryInstr
 
         We lookup the requestId, and update the given counters if needed.
         """
         ev = ct.cast(event, ct.POINTER(memory_response)).contents
-        request = self.current_query_requests.pop(ev.requestId, None)
         if not self.current_executor:
             return 0
         # We have a memory response for the whole query
-        if request is not None:
-            query = self.query_cache.get(self.current_executor, None)
-            if query:
-                instr = bpf_collector.metadata.structs.Instrumentation(ev.payload_addr)
-                query.instrument = instr
-                # Load all fields from the underlying memory.
-                instr.as_dict(include_all=True)
+        query = self.query_cache.get(ev.requestId.as_tuple(), None)
+        if query:
+            instr = bpf_collector.metadata.structs.Instrumentation(ev.payload_addr)
+            query.instrument = instr
+            # Load all fields from the underlying memory.
+            instr.as_dict(include_all=True)
+            # Re-send the same request for continuous monitoring
+            request = bpf_collector.build_memory_request(
+                EventType.MemoryResponseQueryInstr,
+                ev.requestId,
+                query.addr,
+                bpf_collector.metadata.structs.QueryDesc,
+                ["planstate", "instrument"],
+            )
 
-                self.current_query_requests[ev.requestId] = request
-                bpf_collector.send_memory_request(request)
+            bpf_collector.send_memory_request(request)
+        return 0
+
+    def handle_MemoryResponseNodeInstr(
+        self, bpf_collector: BPF_Collector, event: ct._CData
+    ) -> int:
+        """
+        Handle MemoryResponseNodeInstr produced as a response to some memory_request.
+        """
+        if not self.current_executor:
             return 0
-        request, nodeid = self.current_node_requests.pop(ev.requestId, (None, None))
+        query = self.query_cache.get(self.current_executor, None)
+        ev = ct.cast(event, ct.POINTER(memory_response)).contents
+        nodeid = ev.requestId.as_int()
         # We have a memory response for an individual node
-        if request is not None:
-            query = self.query_cache.get(self.current_executor, None)
-            if query is not None and nodeid is not None:
-                node = query.nodes.get(nodeid)
-                if node is not None:
-                    instr = bpf_collector.metadata.structs.Instrumentation(
-                        ev.payload_addr
-                    )
-                    node.instrument = instr
-                    self.current_node_requests[ev.requestId] = (request, nodeid)
-                    bpf_collector.send_memory_request(request)
-                return 0
+        if query is not None and nodeid is not None:
+            node = query.nodes.get(nodeid)
+            if node is not None:
+                instr = bpf_collector.metadata.structs.Instrumentation(ev.payload_addr)
+                node.instrument = instr
+                # Re-send the same request for continuous monitoring
+                request = bpf_collector.build_memory_request(
+                    EventType.MemoryResponseNodeInstr,
+                    Id128.from_int(nodeid),
+                    nodeid,
+                    bpf_collector.metadata.structs.PlanState,
+                    ["instrument"],
+                )
+                bpf_collector.send_memory_request(request)
+        return 0
+
+    def handle_MemoryNodeData(
+        self, bpf_collector: BPF_Collector, event: ct._CData
+    ) -> int:
+        """
+        Handle MemoryNodeData produced as a response for a memory_request.
+        """
+        if not self.current_executor:
+            return 0
+        print("Memory Data!")
+        ev = ct.cast(event, ct.POINTER(planstate_data)).contents
+        query = self.query_cache.get(self.current_executor, None)
+        if query is not None:
+            node = query.add_node_from_event(bpf_collector.metadata, ev)
+            if ev.lefttree and ev.lefttree not in query.nodes:
+                leftchild = PlanState(ev.lefttree)
+                leftchild.parent_node = node
+                query.nodes[ev.lefttree] = leftchild
+                node.children[leftchild] = None
+                self._gather_node_info(bpf_collector, ev.lefttree)
+            if ev.righttree and ev.righttree not in query.nodes:
+                rightchild = PlanState(ev.righttree)
+                rightchild.parent_node = node
+                query.nodes[ev.righttree] = rightchild
+                node.children[rightchild] = None
+                self._gather_node_info(bpf_collector, ev.righttree)
+        return 0
+
+    def _gather_node_info(self, bpf_collector: BPF_Collector, nodeaddr: int) -> None:
+        """
+        Send memory requests to gather information about a specific node.
+        """
+        req = bpf_collector.build_memory_request(
+            EventType.MemoryNodeData,
+            Id128.from_int(nodeaddr),
+            nodeaddr,
+            bpf_collector.metadata.structs.PlanState,
+            [],
+        )
+        bpf_collector.send_memory_request(req)
+
+    def handle_StackSample(self, bpf_collector: BPF_Collector, event: ct._CData) -> int:
+        """
+        Handle StackSample events produced during perf sampling.
+        """
+        ev = ct.cast(event, ct.POINTER(stack_sample)).contents
+        _, creation_time = ev.portal_data.portal_key.as_tuple()
+        if creation_time:
+            self._process_portal_data(bpf_collector, ev.portal_data)
+        bpf_collector.bpf["discovery_enabled"][ct.c_int(1)] = ct.c_bool(False)
+        if bpf_collector.current_query:
+            # Now add the nodes from the stacktrace
+            bpf_collector.current_query.add_nodes_from_stack(
+                bpf_collector.metadata, ev.stack_data
+            )
+            # And add memory_requests to gather their information.
+            for node in bpf_collector.current_query.nodes.values():
+                if node.is_stub and node.addr:
+                    self._gather_node_info(bpf_collector, node.addr)
         return 0
 
 
@@ -487,6 +608,7 @@ class CollectorOptions:
     instrument_flags: int = 0
     enable_nodes_collection: bool = False
     enable_perf_events: bool = False
+    enable_query_discovery: bool = True
 
 
 class BPF_Collector:
@@ -590,6 +712,7 @@ class BPF_Collector:
             }
         )
         planstate_data.update_fields({"instrument": instrument_type})
+        stack_sample.update_fields({"portal_data": portal_data})
 
     @property
     def constant_defines(self) -> Dict[str, int]:
@@ -618,7 +741,8 @@ class BPF_Collector:
         # inconditonally turn on instrumentation.
         if self.options.instrument_flags:
             constants["USER_INSTRUMENT_FLAGS"] = self.options.instrument_flags
-
+        if self.options.enable_query_discovery:
+            constants["ENABLE_QUERY_DISCOVERY"] = True
         return constants
 
     @property
@@ -652,6 +776,8 @@ class BPF_Collector:
                 ("PlanState", "instrument"),
                 ("PlanState", "plan"),
                 ("PlanState", "type"),
+                ("PlanState", "lefttree"),
+                ("PlanState", "righttree"),
                 ("PortalData", "creation_time"),
                 ("PortalData", "queryDesc"),
                 ("QueryDesc", "instrument_options"),
@@ -748,7 +874,7 @@ class BPF_Collector:
                 ev_config=PerfSWConfig.CPU_CLOCK,
                 fn_name=b"perf_event",
                 pid=self.pid,
-                sample_freq=600,
+                sample_freq=1200,
             )
         background_thread = Thread(target=self.background_polling, args=(100,))
         background_thread.start()
@@ -782,7 +908,8 @@ class BPF_Collector:
 
     def build_memory_request(
         self,
-        requestId: int,
+        event_type: EventType,
+        requestId: Id128,
         base_addr: int,
         base_type: Type[Union[ct._CData, Struct, DWARFPointer]],
         path: List[str],
@@ -817,8 +944,13 @@ class BPF_Collector:
                 raise AttributeError(
                     f"Cannot dereference field {part} from type {current_type}"
                 )
+        # For convenience, support the last field as a pointer.
+        if issubclass(current_type, DWARFPointer):
+            memory_path[current_idx + 1] = 0
+            mempath_length += 1
         size = get_size(current_type, dereference=True)
         return memory_request(
+            event_type=event_type,
             requestId=requestId,
             path_size=mempath_length,
             size=size,
@@ -849,4 +981,12 @@ class BPF_Collector:
         cflags.append("-Wno-macro-redefined")
         cflags.append("-Wno-ignored-attributes")
         bpf = BPF(text=buf.encode("utf8"), cflags=cflags, debug=0)
+        # FIXME: get rid of those magic numbers.
+        if self.options.enable_perf_events:
+            bpf["discovery_enabled"][ct.c_int(1)] = ct.c_bool(
+                self.options.enable_query_discovery
+            )
+            bpf["discovery_enabled"][ct.c_int(2)] = ct.c_bool(
+                self.options.enable_query_discovery
+            )
         return bpf
