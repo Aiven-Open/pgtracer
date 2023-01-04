@@ -531,7 +531,6 @@ class EventHandler:
         """
         if not self.current_executor:
             return 0
-        print("Memory Data!")
         ev = ct.cast(event, ct.POINTER(planstate_data)).contents
         query = self.query_cache.get(self.current_executor, None)
         if query is not None:

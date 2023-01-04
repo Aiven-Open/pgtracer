@@ -2,9 +2,14 @@
 This module acts as a general health check for the eBPF collector.
 """
 import re
+from collections import defaultdict
+from contextlib import ExitStack
 from datetime import timedelta
+from threading import Thread
 from time import sleep
+from unittest.mock import patch
 
+from pgtracer.ebpf.collector import EventHandler, InstrumentationFlags
 from pgtracer.utils import timespec_to_timedelta as tstimedelta
 
 
@@ -143,3 +148,99 @@ def test_explain(bpfcollector, connection):
     query = bpfcollector.event_handler.query_history[0]
     root_node = query.root_node
     assert re.match(wanted_plan, root_node.explain())
+
+
+def background_query(connection, query):
+    def execute_query():
+        with connection.cursor() as cur:
+            cur.execute(query)
+            cur.fetchall()
+
+    newthread = Thread(target=execute_query)
+    newthread.start()
+    return newthread
+
+
+def test_long_query(bpfcollector_instrumented, connection):
+
+    events = defaultdict(int)
+
+    def event_handler_observer(method_name):
+        original_method = getattr(EventHandler, method_name)
+
+        def observe_event_handler(event_handler, bpf_collector, event):
+            events[method_name] += 1
+            return original_method(event_handler, bpf_collector, event)
+
+        return observe_event_handler
+
+    with ExitStack() as stack:
+        for meth_name in (
+            "handle_MemoryResponseNodeInstr",
+            "handle_MemoryResponseQueryInstr",
+        ):
+            stack.enter_context(
+                patch(
+                    f"pgtracer.ebpf.collector.EventHandler.{meth_name}",
+                    event_handler_observer(meth_name),
+                )
+            )
+        with connection.execute(
+            """SELECT count(*) FROM (
+            SELECT pg_sleep(0.001)
+            FROM pg_class
+            JOIN pg_attribute ON pg_class.oid = attrelid
+            ) as s """
+        ) as cur:
+            cur.fetchall()
+        wait_for_collector(bpfcollector_instrumented)
+    assert events["handle_MemoryResponseQueryInstr"] > 0
+    assert events["handle_MemoryResponseNodeInstr"] > 0
+
+
+def test_query_discovery(bpfcollector_factory, connection):
+    """
+    Test that information is gathered during a query.
+    """
+
+    events = defaultdict(int)
+
+    def event_handler_observer(method_name):
+        original_method = getattr(EventHandler, method_name)
+
+        def observe_event_handler(event_handler, bpf_collector, event):
+            events[method_name] += 1
+            return original_method(event_handler, bpf_collector, event)
+
+        return observe_event_handler
+
+    with ExitStack() as stack:
+        for meth_name in ("handle_StackSample", "handle_MemoryNodeData"):
+            stack.enter_context(
+                patch(
+                    f"pgtracer.ebpf.collector.EventHandler.{meth_name}",
+                    event_handler_observer(meth_name),
+                )
+            )
+        thread = background_query(
+            connection,
+            """SELECT count(*) FROM (
+            SELECT pg_sleep(0.003)
+            FROM pg_class
+            JOIN pg_attribute ON pg_class.oid = attrelid
+            ) as s """,
+        )
+        # Now set up the collector.
+        collector = bpfcollector_factory(
+            instrument_flags=InstrumentationFlags.ALL,
+            enable_perf_events=True,
+            enable_query_discovery=True,
+            enable_nodes_collection=True,
+        )
+        # And wait for the query to finish
+        thread.join(10)
+        # Wait a few seconds more to make sure collector has gathered all info
+        sleep(1)
+        collector.stop()
+    assert events["handle_StackSample"] > 0
+    assert events["handle_MemoryNodeData"] > 0
