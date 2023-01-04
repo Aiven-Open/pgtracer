@@ -51,7 +51,7 @@ jobs:
 
       - id: tests
         run: |
-          sudo pytest --postgresql-exec /usr/lib/postgresql/${{matrix.postgresql_version}}/bin/pg_ctl --cov --cov-report=xml
+          sudo pytest --postgresql-exec /usr/lib/postgresql/${{matrix.postgresql_version}}/bin/pg_ctl --cov src/ --cov-report=xml
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v3
@@ -86,7 +86,7 @@ jobs:
 
       - id: fedora_tests
         run: |
-          sudo pytest --postgresql-host 172.16.0.1 --container fedora --cov --cov-report=xml
+          sudo pytest --postgresql-host 172.16.0.1 --container fedora --cov src/ --cov-report=xml
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v3
