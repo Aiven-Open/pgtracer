@@ -151,6 +151,14 @@ def make_collector(
 
 
 @pytest.fixture
+def bpfcollector_factory(connection, request):
+    def factory_func(**kwargs):
+        return make_collector(connection, request.config, **kwargs)
+
+    return factory_func
+
+
+@pytest.fixture
 def bpfcollector(
     request: FixtureRequest, connection
 ):  # pylint: disable=redefined-outer-name
@@ -174,6 +182,8 @@ def bpfcollector_instrumented(
         request.config,
         instrument_flags=InstrumentationFlags.ALL,
         enable_perf_events=True,
+        enable_query_discovery=True,
+        enable_nodes_collection=True,
     )
     yield collector
     collector.stop()
