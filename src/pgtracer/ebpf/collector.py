@@ -679,6 +679,7 @@ class BPF_Collector:
         self.update_struct_defs()
         self.is_running = False
         self.current_query: Optional[Query] = None
+        self.background_thread: Optional[Thread] = None
 
     @classmethod
     def from_pid(
@@ -875,8 +876,8 @@ class BPF_Collector:
                 pid=self.pid,
                 sample_freq=1200,
             )
-        background_thread = Thread(target=self.background_polling, args=(100,))
-        background_thread.start()
+        self.background_thread = Thread(target=self.background_polling, args=(100,))
+        self.background_thread.start()
         print("eBPF collector started")
 
     def stop(self) -> None:
@@ -884,6 +885,10 @@ class BPF_Collector:
         Stop polling the collector.
         """
         self.is_running = False
+        if self.background_thread:
+            self.background_thread.join()
+            self.background_thread = None
+            self.bpf.cleanup()
 
     # pylint: disable=unused-argument
     def _handle_event(self, cpu: int, data: ct._CData, size: int) -> int:
