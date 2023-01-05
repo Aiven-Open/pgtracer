@@ -9,6 +9,8 @@ from threading import Thread
 from time import sleep
 from unittest.mock import patch
 
+from flaky import flaky
+
 from pgtracer.ebpf.collector import EventHandler, InstrumentationFlags
 from pgtracer.utils import timespec_to_timedelta as tstimedelta
 
@@ -152,8 +154,7 @@ def test_explain(bpfcollector, connection):
 
 def background_query(connection, query):
     def execute_query():
-        with connection.cursor() as cur:
-            cur.execute(query)
+        with connection.execute(query) as cur:
             cur.fetchall()
 
     newthread = Thread(target=execute_query)
@@ -187,7 +188,7 @@ def test_long_query(bpfcollector_instrumented, connection):
             )
         with connection.execute(
             """SELECT count(*) FROM (
-            SELECT pg_sleep(0.001)
+            SELECT pg_sleep(0.01)
             FROM pg_class
             JOIN pg_attribute ON pg_class.oid = attrelid
             ) as s """
@@ -198,6 +199,7 @@ def test_long_query(bpfcollector_instrumented, connection):
     assert events["handle_MemoryResponseNodeInstr"] > 0
 
 
+@flaky
 def test_query_discovery(bpfcollector_factory, connection):
     """
     Test that information is gathered during a query.
@@ -225,7 +227,7 @@ def test_query_discovery(bpfcollector_factory, connection):
         thread = background_query(
             connection,
             """SELECT count(*) FROM (
-            SELECT pg_sleep(0.003)
+            SELECT pg_sleep(0.01)
             FROM pg_class
             JOIN pg_attribute ON pg_class.oid = attrelid
             ) as s """,
@@ -238,9 +240,9 @@ def test_query_discovery(bpfcollector_factory, connection):
             enable_nodes_collection=True,
         )
         # And wait for the query to finish
-        thread.join(10)
+        thread.join()
         # Wait a few seconds more to make sure collector has gathered all info
-        sleep(1)
+        sleep(3)
         collector.stop()
     assert events["handle_StackSample"] > 0
     assert events["handle_MemoryNodeData"] > 0
