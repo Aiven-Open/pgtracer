@@ -18,11 +18,13 @@ jobs:
         postgresql_version: [11, 12, 13, 14, 15]
         experimental: [false]
         repo: ["pgdg"]
+        pytest_args: [""]
         # Define the current dev version to be experimental
         include:
           - postgresql_version: 16
             experimental: true
             repo: "pgdg-snapshot"
+            pytest_args: "-m 'not slow'"
     env:
       PGVERSION: ${{ matrix.postgresql_version }}
       DISTRO: ubuntu
@@ -50,7 +52,7 @@ jobs:
 
       - id: tests
         run: |
-          sudo pytest --postgresql-exec /usr/lib/postgresql/${{matrix.postgresql_version}}/bin/pg_ctl --cov src/ --cov-report=xml
+          sudo pytest --postgresql-exec /usr/lib/postgresql/${{matrix.postgresql_version}}/bin/pg_ctl --cov src/ --cov-report=xml ${{matrix.pytest_args}}
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v3
@@ -85,7 +87,7 @@ jobs:
 
       - id: fedora_tests
         run: |
-          sudo pytest --postgresql-host 172.16.0.1 --container fedora --cov src/ --cov-report=xml
+          sudo pytest --postgresql-host 172.16.0.1 --container fedora --cov src/ --cov-report=xml -m "not slow"
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v3

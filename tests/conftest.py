@@ -37,6 +37,15 @@ def pytest_addoption(parser):
     )
 
 
+def pytest_configure(config):
+    """
+    Add used markers.
+    """
+    config.addinivalue_line(
+        "markers", "slow: mark test as being 'slow', allowing to skip it"
+    )
+
+
 @pytest.fixture(scope="session")
 def nonroot_postgres(request: FixtureRequest) -> Iterator[PostgreSQLExecutor]:
     """
