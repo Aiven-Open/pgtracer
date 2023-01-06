@@ -9,6 +9,7 @@ from threading import Thread
 from time import sleep
 from unittest.mock import patch
 
+import pytest
 from flaky import flaky
 
 from pgtracer.ebpf.collector import EventHandler, InstrumentationFlags
@@ -162,6 +163,7 @@ def background_query(connection, query):
     return newthread
 
 
+@pytest.mark.slow
 def test_long_query(bpfcollector_instrumented, connection):
 
     events = defaultdict(int)
@@ -199,7 +201,8 @@ def test_long_query(bpfcollector_instrumented, connection):
     assert events["handle_MemoryResponseNodeInstr"] > 0
 
 
-@flaky
+@pytest.mark.slow
+@flaky(max_runs=3)
 def test_query_discovery(bpfcollector_factory, connection):
     """
     Test that information is gathered during a query.
