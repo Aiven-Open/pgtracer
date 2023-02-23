@@ -633,11 +633,16 @@ class Structs:
             return self.cache[attrname]
 
         # Ok, build the class.
-        die = next(self.metadata.search_symbol("DW_TAG_structure_type", attrname))
-        cls = type(attrname, (Struct,), {"metadata": self.metadata, "die": die})
-        self.cache[attrname] = cls
-
-        return cls
+        for die in self.metadata.search_symbol("DW_TAG_structure_type", attrname):
+            if (
+                "DW_AT_declaration" in die.attributes
+                and die.attributes["DW_AT_declaration"]
+            ):
+                continue
+            cls = type(attrname, (Struct,), {"metadata": self.metadata, "die": die})
+            self.cache[attrname] = cls
+            return cls
+        raise ValueError(f"Could not find type for {attrname}")
 
 
 class CacheJSONEncoder(json.JSONEncoder):
