@@ -858,7 +858,7 @@ class ProcessMetadata:
         gdb_type = GDB_INDEX_TYPES_MAPPING.get(tag)
         matching_dies_offsets = set()
         matching_dies_list = []
-        for (cuidx, _type) in cu_vector:
+        for cuidx, _type in cu_vector:
             if gdb_type is not None and gdb_type != _type:
                 continue
             cu_offset = self.gdb_index.cu_offset_by_idx(cuidx)
