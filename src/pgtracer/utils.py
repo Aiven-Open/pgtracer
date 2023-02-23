@@ -17,19 +17,28 @@ else:
 
 def timespec_to_timedelta(timespec: _CData) -> timedelta:
     """
-    Convert a timespec_t struct to a timedelta.
+    Convert a timespec_t or instr_time struct to a timedelta.
     """
-    return timedelta(
-        seconds=timespec.tv_sec.value,  # type: ignore
-        microseconds=timespec.tv_nsec.value / 1000,  # type: ignore
-    )
+    # Can't really compare it to a proper class, so test on the class name
+    if timespec.__class__.__name__ == "timespec":
+        return timedelta(
+            seconds=timespec.tv_sec.value,  # type: ignore
+            microseconds=timespec.tv_nsec.value / 1000,  # type: ignore
+        )
+    if timespec.__class__.__name__ == "instr_time":
+        return timedelta(seconds=timespec.ticks.value / 1000000000)  # type: ignore
+    raise ValueError("Expecting a timespec or instr_time struct")
 
 
 def timespec_to_float(timespec: _CData) -> float:
     """
-    Convert a timespec_t struct to a float representing the number of seconds.
+    Convert a timespec_t or instr_time struct to a float representing the number of seconds.
     """
-    return float(timespec.tv_sec.value + timespec.tv_nsec.value / 1000000000)  # type: ignore
+    if timespec.__class__.__name__ == "timespec":
+        return float(timespec.tv_sec.value + timespec.tv_nsec.value / 1000000000)  # type: ignore
+    if timespec.__class__.__name__ == "instr_time":
+        return float(timespec.ticks.value / 1000000000)  # type: ignore
+    raise ValueError("Expecting a timespec or instr_time struct")
 
 
 NSPID_PARSING_RE = re.compile(rb"^NSpid:\s+((?:(?:\d+)\s*)+)")
