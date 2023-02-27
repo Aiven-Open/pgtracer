@@ -26,16 +26,16 @@ def wait_for_collector(collector):
         sleep(0.05)
 
 
-def test_basic_ebf_collector(bpfcollector, connection):
+def test_basic_ebf_collector(querytracer, connection):
     """
     Test the most basic functionality of the ebpf collector works.
     """
     # Now try running a query, and see if we can get it back
     with connection.execute("SELECT now()") as cur:
         querystart = cur.fetchall()[0][0].replace(microsecond=0, tzinfo=None)
-    wait_for_collector(bpfcollector)
-    assert len(bpfcollector.event_handler.query_history) == 1
-    query = bpfcollector.event_handler.query_history[0]
+    wait_for_collector(querytracer)
+    assert len(querytracer.event_handler.query_history) == 1
+    query = querytracer.event_handler.query_history[0]
     assert query.text == "SELECT now()"
     assert query.search_path == '"$user", public'
     assert query.start_datetime.replace(microsecond=0) == querystart
@@ -46,7 +46,7 @@ def test_basic_ebf_collector(bpfcollector, connection):
     assert query.syscache_hitratio is None
 
 
-def test_instrumentation(bpfcollector_instrumented, connection):
+def test_instrumentation(querytracer_instrumented, connection):
     """
     Test that turning instrumentation on works as expected.
     """
@@ -57,10 +57,10 @@ def test_instrumentation(bpfcollector_instrumented, connection):
 
     with connection.execute("SELECT * FROM pg_attribute") as cur:
         cur.fetchall()
-    wait_for_collector(bpfcollector_instrumented)
+    wait_for_collector(querytracer_instrumented)
 
-    assert len(bpfcollector_instrumented.event_handler.query_history) == 1
-    query = bpfcollector_instrumented.event_handler.query_history[0]
+    assert len(querytracer_instrumented.event_handler.query_history) == 1
+    query = querytracer_instrumented.event_handler.query_history[0]
     assert query.instrument.need_timer.value is True
     assert query.instrument.need_bufusage.value is True
     assert query.runtime > timedelta(0)
@@ -86,12 +86,12 @@ def test_instrumentation(bpfcollector_instrumented, connection):
     assert query.syscache_hitratio is None
 
     # Generate some temp files for fun
-    bpfcollector_instrumented.event_handler.query_history = []
+    querytracer_instrumented.event_handler.query_history = []
     connection.execute("SET work_mem = '64kB'")
     with connection.execute("SELECT * FROM generate_series(1, 10000) as t"):
         pass
-    wait_for_collector(bpfcollector_instrumented)
-    query = bpfcollector_instrumented.event_handler.query_history[0]
+    wait_for_collector(querytracer_instrumented)
+    query = querytracer_instrumented.event_handler.query_history[0]
     assert query.text == "SELECT * FROM generate_series(1, 10000) as t"
     assert query.instrument.bufusage.temp_blks_read.value > 0
     assert query.instrument.bufusage.temp_blks_written.value > 0
@@ -100,7 +100,7 @@ def test_instrumentation(bpfcollector_instrumented, connection):
         assert tstimedelta(query.instrument.bufusage.temp_blk_write_time) > timedelta(0)
 
 
-def test_plans(bpfcollector_instrumented, connection):
+def test_plans(querytracer_instrumented, connection):
     """
     Test that we are able to build a plans.
     """
@@ -108,10 +108,10 @@ def test_plans(bpfcollector_instrumented, connection):
         "SELECT * FROM (SELECT * FROM pg_class ORDER BY reltype LIMIT 10) t"
     ) as cur:
         cur.fetchall()
-    wait_for_collector(bpfcollector_instrumented)
-    query = bpfcollector_instrumented.event_handler.query_history[0]
+    wait_for_collector(querytracer_instrumented)
+    query = querytracer_instrumented.event_handler.query_history[0]
     root_node = query.root_node
-    NodeTag = bpfcollector_instrumented.metadata.enums.NodeTag
+    NodeTag = querytracer_instrumented.metadata.enums.NodeTag
     assert root_node.tag == NodeTag.T_Limit
     assert len(root_node.children) == 1
     assert root_node.parent_node is None
@@ -131,7 +131,7 @@ def test_plans(bpfcollector_instrumented, connection):
     assert seqscan_node.parent_node == sort_node
 
 
-def test_explain(bpfcollector, connection):
+def test_explain(querytracer, connection):
     """
     Test that we are able to build a plans.
     """
@@ -147,8 +147,8 @@ def test_explain(bpfcollector, connection):
         "SELECT * FROM (SELECT * FROM pg_class ORDER BY reltype LIMIT 10) t"
     ) as cur:
         cur.fetchall()
-    wait_for_collector(bpfcollector)
-    query = bpfcollector.event_handler.query_history[0]
+    wait_for_collector(querytracer)
+    query = querytracer.event_handler.query_history[0]
     root_node = query.root_node
     assert re.match(wanted_plan, root_node.explain())
 
@@ -164,7 +164,7 @@ def background_query(connection, query):
 
 
 @pytest.mark.slow
-def test_long_query(bpfcollector_instrumented, connection):
+def test_long_query(querytracer_instrumented, connection):
 
     events = defaultdict(int)
 
@@ -196,14 +196,14 @@ def test_long_query(bpfcollector_instrumented, connection):
             ) as s """
         ) as cur:
             cur.fetchall()
-        wait_for_collector(bpfcollector_instrumented)
+        wait_for_collector(querytracer_instrumented)
     assert events["handle_MemoryResponseQueryInstr"] > 0
     assert events["handle_MemoryResponseNodeInstr"] > 0
 
 
 @pytest.mark.slow
 @flaky(max_runs=3)
-def test_query_discovery(bpfcollector_factory, connection):
+def test_query_discovery(querytracer_factory, connection):
     """
     Test that information is gathered during a query.
     """
@@ -236,7 +236,7 @@ def test_query_discovery(bpfcollector_factory, connection):
             ) as s """,
         )
         # Now set up the collector.
-        collector = bpfcollector_factory(
+        collector = querytracer_factory(
             instrument_flags=InstrumentationFlags.ALL,
             enable_perf_events=True,
             enable_query_discovery=True,

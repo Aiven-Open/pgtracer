@@ -24,6 +24,14 @@ from .dwarf import DWARFPointer, ProcessMetadata, Struct, get_size
 from .unwind import stack_data_t
 
 
+class InvalidStateException(Exception):
+    """
+    Invalid State of a BPFCollector Exception.
+
+    This Exception occurs when an operation is performed on a BPFCollector which is not in the prerequisite state.
+    """
+
+
 def intenum_to_c(intenum: Type[IntEnum]) -> str:
     """
     Generate C code defining an enum corresponding to a Python IntEnum.
@@ -274,7 +282,7 @@ class EventHandler:
         self.current_executor: Optional[Tuple[int, int]] = None
         self.nextRequestId = 0
 
-    def handle_event(self, bpf_collector: BPF_Collector, event: ct._CData) -> int:
+    def handle_event(self, bpf_collector: BPFCollector, event: ct._CData) -> int:
         """
         Handle an event from EBPF ringbuffer.
         Every event should be tagged with a short int as the first member to
@@ -285,11 +293,11 @@ class EventHandler:
         event_type = ct.cast(event, ct.POINTER(ct.c_short)).contents.value
         event_type_name = EventType(event_type).name
         method_name = f"handle_{event_type_name}"
-        method: Callable[[BPF_Collector, ct._CData], int] = getattr(self, method_name)
+        method: Callable[[BPFCollector, ct._CData], int] = getattr(self, method_name)
         return method(bpf_collector, event)
 
     def _process_portal_data(
-        self, bpf_collector: BPF_Collector, event: portal_data
+        self, bpf_collector: BPFCollector, event: portal_data
     ) -> int:
         """
         Process the portal data. This is used both when a query starts, and when we see
@@ -318,7 +326,7 @@ class EventHandler:
             bpf_collector.send_memory_request(request)
         return 0
 
-    def handle_ExecutorRun(self, bpf_collector: BPF_Collector, event: ct._CData) -> int:
+    def handle_ExecutorRun(self, bpf_collector: BPFCollector, event: ct._CData) -> int:
         """
         Handle ExecutorRun event. This event is produced by an uprobe on
         standard_ExecutorRun. See executorstart_enter in program.c.
@@ -333,7 +341,7 @@ class EventHandler:
         return self._process_portal_data(bpf_collector, event)
 
     def handle_ExecutorFinish(
-        self, bpf_collector: BPF_Collector, event: ct._CData
+        self, bpf_collector: BPFCollector, event: ct._CData
     ) -> int:
         """
         Handle ExecutorFinish event.
@@ -350,7 +358,7 @@ class EventHandler:
         return 0
 
     def handle_DropPortalEnter(
-        self, bpf_collector: BPF_Collector, event: ct._CData
+        self, bpf_collector: BPFCollector, event: ct._CData
     ) -> int:
         """
         Handle DropPortalEnter event. This event is produced by a uprobe on
@@ -373,7 +381,7 @@ class EventHandler:
 
     # pylint: disable=unused-argument
     def handle_DropPortalReturn(
-        self, bpf_collector: BPF_Collector, event: ct._CData
+        self, bpf_collector: BPFCollector, event: ct._CData
     ) -> int:
         """
         Handle DropPortalReturn event. This event is produced by an uretprobe on
@@ -393,7 +401,7 @@ class EventHandler:
         return 0
 
     def handle_ExecProcNodeFirst(
-        self, bpf_collector: BPF_Collector, event: ct._CData
+        self, bpf_collector: BPFCollector, event: ct._CData
     ) -> int:
         """
         Handle ExecProcNodeFirst event. This event is produced by a uprobe on
@@ -418,7 +426,7 @@ class EventHandler:
             bpf_collector.send_memory_request(request)
         return 0
 
-    def handle_ExecEndNode(self, bpf_collector: BPF_Collector, event: ct._CData) -> int:
+    def handle_ExecEndNode(self, bpf_collector: BPFCollector, event: ct._CData) -> int:
         """
         Handle ExecEndNode event. This event is produced by a uprobe on
         ExecEndNode's implementations.
@@ -442,7 +450,7 @@ class EventHandler:
         return 0
 
     def handle_KBlockRqIssue(
-        self, bpf_collector: BPF_Collector, event: ct._CData
+        self, bpf_collector: BPFCollector, event: ct._CData
     ) -> int:
         """
         Handle KBlockRqIssue event. This event is produced by a kernel
@@ -466,7 +474,7 @@ class EventHandler:
         return 0
 
     def handle_MemoryResponseQueryInstr(
-        self, bpf_collector: BPF_Collector, event: ct._CData
+        self, bpf_collector: BPFCollector, event: ct._CData
     ) -> int:
         """
         Handle MemoryResponseQueryInstr
@@ -496,7 +504,7 @@ class EventHandler:
         return 0
 
     def handle_MemoryResponseNodeInstr(
-        self, bpf_collector: BPF_Collector, event: ct._CData
+        self, bpf_collector: BPFCollector, event: ct._CData
     ) -> int:
         """
         Handle MemoryResponseNodeInstr produced as a response to some memory_request.
@@ -524,7 +532,7 @@ class EventHandler:
         return 0
 
     def handle_MemoryNodeData(
-        self, bpf_collector: BPF_Collector, event: ct._CData
+        self, bpf_collector: BPFCollector, event: ct._CData
     ) -> int:
         """
         Handle MemoryNodeData produced as a response for a memory_request.
@@ -549,7 +557,7 @@ class EventHandler:
                 self._gather_node_info(bpf_collector, ev.righttree)
         return 0
 
-    def _gather_node_info(self, bpf_collector: BPF_Collector, nodeaddr: int) -> None:
+    def _gather_node_info(self, bpf_collector: BPFCollector, nodeaddr: int) -> None:
         """
         Send memory requests to gather information about a specific node.
         """
@@ -562,7 +570,7 @@ class EventHandler:
         )
         bpf_collector.send_memory_request(req)
 
-    def handle_StackSample(self, bpf_collector: BPF_Collector, event: ct._CData) -> int:
+    def handle_StackSample(self, bpf_collector: BPFCollector, event: ct._CData) -> int:
         """
         Handle StackSample events produced during perf sampling.
         """
@@ -601,16 +609,13 @@ class InstrumentationFlags(IntEnum):
 @dataclass
 class CollectorOptions:
     """
-    Dataclass for collector options.
+    Base class for BPFCollector Options.
     """
 
-    instrument_flags: int = 0
-    enable_nodes_collection: bool = False
-    enable_perf_events: bool = False
-    enable_query_discovery: bool = True
+    enable_perf_events: bool = True
 
 
-class BPF_Collector:
+class BPFCollector:
     """
     Workhorse for pgtracer.
 
@@ -618,6 +623,8 @@ class BPF_Collector:
     using supplied options and extracted metadata about the Postgres
     executable.
     """
+
+    options_cls: Type[CollectorOptions] = CollectorOptions
 
     ExecEndFuncs = [
         "ExecEndAgg",
@@ -668,13 +675,16 @@ class BPF_Collector:
     def __init__(
         self,
         metadata: ProcessMetadata,
-        options: CollectorOptions = CollectorOptions(),
+        options: Optional[CollectorOptions] = None,
     ):
+        if options is None:
+            options = self.options_cls()
         self.options = options
         self.pid = metadata.pid
         self.metadata = metadata
         self.program = str(self.metadata.program).encode("utf8")
         self.bpf = self.prepare_bpf()
+        self.setup_bpf_state()
         self.event_handler: EventHandler = EventHandler()
         self.update_struct_defs()
         self.is_running = False
@@ -684,9 +694,9 @@ class BPF_Collector:
     @classmethod
     def from_pid(
         cls, pid: int, options: CollectorOptions = CollectorOptions()
-    ) -> BPF_Collector:
+    ) -> BPFCollector:
         """
-        Build a BPF_Collector from a pid.
+        Build a BPFCollector from a pid.
         """
         # FIXME: make this configurable
         cache_dir = Path("~/.cache").expanduser() / "pgtracer"
@@ -737,12 +747,6 @@ class BPF_Collector:
             "MEMORY_PATH_SIZE": MEMORY_PATH_SIZE,
         }
 
-        # USER_INSTRUMENT_FLAGS is defined only if the user wants to
-        # inconditonally turn on instrumentation.
-        if self.options.instrument_flags:
-            constants["USER_INSTRUMENT_FLAGS"] = self.options.instrument_flags
-        if self.options.enable_query_discovery:
-            constants["ENABLE_QUERY_DISCOVERY"] = True
         return constants
 
     @property
@@ -850,23 +854,22 @@ class BPF_Collector:
             self.bpf.ring_buffer_poll(refresh_rate)
             sleep(refresh_rate / 1000.0)
 
+    def attach_probes(self) -> None:
+        """
+        Attach the required probes for this collector.
+        """
+        raise NotImplementedError()
+
     def start(self) -> None:
         """
-        Start the ebpf collector:
-         - attach uprobes/uretprobes
-         - open the ringbuffer.
+        Starts the bpf collector.
         """
+
+        if self.is_running:
+            raise InvalidStateException("BPF Collector is already running")
         print("Starting eBPF collector...")
         self.bpf[b"event_ring"].open_ring_buffer(self._handle_event)
-        self._attach_uprobe("PortalDrop", "portaldrop_enter")
-        self._attach_uretprobe("PortalDrop", "portaldrop_return")
-        self._attach_uprobe("standard_ExecutorStart", "executorstart_enter")
-        self._attach_uprobe("standard_ExecutorRun", "executorrun_enter")
-        self._attach_uprobe("ExecutorFinish", "executorfinish_enter")
-        if self.options.enable_nodes_collection:
-            self._attach_uprobe("ExecProcNodeFirst", "execprocnodefirst_enter")
-            for func in self.ExecEndFuncs:
-                self._attach_uprobe(func, "execendnode_enter")
+        self.attach_probes()
         self.is_running = True
         if self.options.enable_perf_events:
             self.bpf.attach_perf_event(
@@ -903,11 +906,8 @@ class BPF_Collector:
 
     def _optional_code(self) -> str:
         buf = ""
-        if self.options.enable_nodes_collection:
-            buf += load_c_file("plan.c")
         if self.options.enable_perf_events:
             buf += load_c_file("perf.c")
-        buf += load_c_file("block_rq.c")
         return buf
 
     def build_memory_request(
@@ -985,12 +985,78 @@ class BPF_Collector:
         cflags.append("-Wno-macro-redefined")
         cflags.append("-Wno-ignored-attributes")
         bpf = BPF(text=buf.encode("utf8"), cflags=cflags, debug=0)
+        return bpf
+
+    def setup_bpf_state(self) -> None:
+        """
+        Setup the initial BPF State
+        """
+        return
+
+
+@dataclass
+class QueryTracerOptions(CollectorOptions):
+    """
+    Dataclass for QueryTracerBPFCollector options.
+    """
+
+    instrument_flags: int = 0
+    enable_nodes_collection: bool = False
+    enable_query_discovery: bool = True
+
+
+class QueryTracerBPFCollector(BPFCollector):
+    """
+    BPF Collector tracing queries and optionally individual nodes.
+    """
+
+    options_cls = QueryTracerOptions
+
+    def __init__(
+        self,
+        metadata: ProcessMetadata,
+        options: Optional[QueryTracerOptions] = None,
+    ):
+        self.options: QueryTracerOptions
+        super().__init__(metadata, options)
+
+    def attach_probes(self) -> None:
+        self._attach_uprobe("PortalDrop", "portaldrop_enter")
+        self._attach_uretprobe("PortalDrop", "portaldrop_return")
+        self._attach_uprobe("standard_ExecutorStart", "executorstart_enter")
+        self._attach_uprobe("standard_ExecutorRun", "executorrun_enter")
+        self._attach_uprobe("ExecutorFinish", "executorfinish_enter")
+        if self.options.enable_nodes_collection:
+            self._attach_uprobe("ExecProcNodeFirst", "execprocnodefirst_enter")
+            for func in self.ExecEndFuncs:
+                self._attach_uprobe(func, "execendnode_enter")
+
+    @property
+    def constant_defines(self) -> Dict[str, int]:
+        constants = super().constant_defines
+        # USER_INSTRUMENT_FLAGS is defined only if the user wants to
+        # inconditonally turn on instrumentation.
+        if self.options.instrument_flags:
+            constants["USER_INSTRUMENT_FLAGS"] = self.options.instrument_flags
+        if self.options.enable_query_discovery:
+            constants["ENABLE_QUERY_DISCOVERY"] = True
+        return constants
+
+    def _optional_code(self) -> str:
+        buf = super()._optional_code()
+        if self.options.enable_nodes_collection:
+            buf += load_c_file("plan.c")
+        buf += load_c_file("block_rq.c")
+        return buf
+
+    def setup_bpf_state(self) -> None:
         # FIXME: get rid of those magic numbers.
+        super().setup_bpf_state()
         if self.options.enable_perf_events:
-            bpf[b"discovery_enabled"][ct.c_int(1)] = ct.c_bool(
+            self.bpf[b"discovery_enabled"][ct.c_int(1)] = ct.c_bool(
                 self.options.enable_query_discovery
             )
-            bpf[b"discovery_enabled"][ct.c_int(2)] = ct.c_bool(
+            self.bpf[b"discovery_enabled"][ct.c_int(2)] = ct.c_bool(
                 self.options.enable_query_discovery
             )
         return bpf
