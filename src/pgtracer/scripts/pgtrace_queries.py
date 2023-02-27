@@ -9,9 +9,9 @@ from datetime import timedelta
 from typing import Any, Dict
 
 from pgtracer.ebpf.collector import (
-    BPF_Collector,
-    CollectorOptions,
     InstrumentationFlags,
+    QueryTracerBPFCollector,
+    QueryTracerOptions,
 )
 from pgtracer.ebpf.dwarf import Struct
 from pgtracer.model.query import Query
@@ -44,7 +44,7 @@ def dump_dict(somedict: Dict[str, Any], indent: int = 0) -> str:
     return "\n".join(parts)
 
 
-def print_query(query: Query, options: CollectorOptions) -> None:
+def print_query(query: Query, options: QueryTracerOptions) -> None:
     """
     Print a query according to which collector options have been set.
     """
@@ -142,12 +142,12 @@ def main() -> None:
     if args.instrument:
         for flag in args.instrument:
             instrument_flags |= InstrumentationFlags[flag]
-    options = CollectorOptions(
+    options = QueryTracerOptions(
         instrument_flags=instrument_flags,
         enable_nodes_collection=args.nodes_collection,
         enable_perf_events=instrument_flags != 0,
     )
-    collector = BPF_Collector.from_pid(pid, options)
+    collector = QueryTracerBPFCollector.from_pid(pid, options)
     collector.start()
     total_queries = 0
     last_running_query = None

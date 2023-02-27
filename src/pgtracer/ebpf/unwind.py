@@ -495,7 +495,7 @@ class Frame:
         Read an argument of givent type at the given offset from the stack.
         """
         assert 0 <= offset < len(self.stack)  # type: ignore
-        return ctype.from_buffer(bytearray(self.stack)[offset:])
+        return ctype.from_buffer(bytearray(self.stack)[offset:])  # type: ignore
 
     def eval_expr(
         self, expr: DWARFExprOp, ctype: Type[CT], dwarf_stack: List[CT]

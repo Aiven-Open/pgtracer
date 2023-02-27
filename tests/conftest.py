@@ -19,9 +19,9 @@ from pytest_postgresql.executor import PostgreSQLExecutor
 from pytest_postgresql.executor_noop import NoopExecutor
 
 from pgtracer.ebpf.collector import (
-    BPF_Collector,
     CollectorOptions,
     InstrumentationFlags,
+    QueryTracerBPFCollector,
 )
 from pgtracer.utils import resolve_container_pid
 
@@ -142,7 +142,7 @@ def connection(nonroot_postgres):  # pylint: disable=redefined-outer-name
 
 
 def make_collector(
-    connection, config, **kwargs
+    cls, connection, config, **kwargs
 ):  # pylint: disable=redefined-outer-name
     """
     Create a collector from a connection.
@@ -153,40 +153,43 @@ def make_collector(
         # to the host namespace.
         backend_pid = resolve_container_pid(config.getoption("container"), backend_pid)
     kwargs.setdefault("enable_nodes_collection", True)
-    options = CollectorOptions(**kwargs)
-    collector = BPF_Collector.from_pid(pid=backend_pid, options=options)
+    options = cls.options_cls(**kwargs)
+    collector = cls.from_pid(pid=backend_pid, options=options)
     collector.start()
     return collector
 
 
 @pytest.fixture
-def bpfcollector_factory(connection, request):
+def querytracer_factory(connection, request):
     def factory_func(**kwargs):
-        return make_collector(connection, request.config, **kwargs)
+        return make_collector(
+            QueryTracerBPFCollector, connection, request.config, **kwargs
+        )
 
     return factory_func
 
 
 @pytest.fixture
-def bpfcollector(
+def querytracer(
     request: FixtureRequest, connection
 ):  # pylint: disable=redefined-outer-name
     """
     Returns a bpfcollector associated to the current connection.
     """
-    collector = make_collector(connection, request.config)
+    collector = make_collector(QueryTracerBPFCollector, connection, request.config)
     yield collector
     collector.stop()
 
 
 @pytest.fixture
-def bpfcollector_instrumented(
+def querytracer_instrumented(
     request: FixtureRequest, connection
 ):  # pylint: disable=redefined-outer-name
     """
     Returns a bpfcollector with instrumentation turned on.
     """
     collector = make_collector(
+        QueryTracerBPFCollector,
         connection,
         request.config,
         instrument_flags=InstrumentationFlags.ALL,
