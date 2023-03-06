@@ -22,7 +22,7 @@ TEST_EXEC_BINARY = Path(__file__).parent / "test_bins" / "test_stack.main"
 
 class MockProcess:
     """
-    Mock a psutil.Process.
+    Mock a pypsutil.Process.
     """
 
     def __init__(self, binary):

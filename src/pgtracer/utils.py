@@ -2,12 +2,14 @@
 Miscellaneous utility functions.
 """
 
+import functools
+import itertools
 import re
 import subprocess
 from datetime import timedelta
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, BinaryIO, Optional
 
-from psutil import Process
+from pypsutil import Process
 
 if TYPE_CHECKING:
     from ctypes import _CData
@@ -67,3 +69,12 @@ def resolve_container_pid(container: str, container_pid: int) -> Optional[int]:
                     if ns_pids[-1] == container_pid:
                         return ns_pids[0]
     return None
+
+
+def readcstr(filelike: BinaryIO) -> bytes:
+    """
+    Read a NULL terminated C-string from a BinaryIO
+    Courtesy of https://stackoverflow.com/a/32775270
+    """
+    toeof = iter(functools.partial(filelike.read, 1), b"")
+    return b"".join(itertools.takewhile(b"\0".__ne__, toeof))

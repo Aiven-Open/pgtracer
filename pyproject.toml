@@ -7,7 +7,7 @@ authors = [
 ]
 dependencies = [
     "pyelftools",
-    "psutil"
+    "pypsutil"
 ]
 readme = "README.md"
 requires-python = ">=3.7"
@@ -20,6 +20,7 @@ classifiers = [
 
 [project.scripts]
 pgtrace_queries = "pgtracer.scripts.pgtrace_queries:main"
+pgtrace_gucs = "pgtracer.scripts.pgtrace_gucs:main"
 
 [project.optional-dependencies]
 lint = [

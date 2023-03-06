@@ -8,7 +8,7 @@ from unittest import TestCase
 
 from bcc import BPF
 from bcc.libbcc import lib as libbcc
-from psutil import Process
+from pypsutil import Process
 
 from pgtracer.ebpf.collector import CODE_BASE_PATH
 from pgtracer.ebpf.dwarf import ProcessMetadata, die_name
