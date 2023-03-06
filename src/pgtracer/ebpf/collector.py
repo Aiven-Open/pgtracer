@@ -12,12 +12,12 @@ import ctypes as ct
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
-from threading import Thread
+from threading import Lock, Thread
 from time import sleep
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type, TypeVar, Union
 
 from bcc import BPF, PerfSWConfig, PerfType
-from psutil import Process
+from pypsutil import Process
 
 from ..model import PlanState, Query
 from .dwarf import DWARFPointer, ProcessMetadata, Struct, get_size
@@ -28,7 +28,8 @@ class InvalidStateException(Exception):
     """
     Invalid State of a BPFCollector Exception.
 
-    This Exception occurs when an operation is performed on a BPFCollector which is not in the prerequisite state.
+    This Exception occurs when an operation is performed on a BPFCollector
+    which is not in the prerequisite state.
     """
 
 
@@ -117,10 +118,12 @@ class EventType(IntEnum):
     ExecProcNodeFirst = 5
     ExecEndNode = 6
     KBlockRqIssue = 7
-    MemoryResponseQueryInstr = 8
-    MemoryResponseNodeInstr = 9
-    MemoryNodeData = 10
-    StackSample = 11
+    StackSample = 8
+    MemoryResponseQueryInstr = 9
+    MemoryResponseNodeInstr = 10
+    MemoryNodeData = 11
+    MemoryBackendType = 12
+    GUCResponse = 14
 
 
 instrument_type = ct.c_byte * 0
@@ -220,7 +223,7 @@ class planstate_data(StubStructure):
     ]
 
 
-MEMORY_REQUEST_MAXSIZE = 1024
+MEMORY_REQUEST_MAXSIZE = 131072
 MEMORY_PATH_SIZE = 5
 
 
@@ -590,6 +593,17 @@ class EventHandler:
                     self._gather_node_info(bpf_collector, node.addr)
         return 0
 
+    def handle_MemoryBackendType(
+        self, bpf_collector: BPFCollector, event: ct._CData
+    ) -> int:
+        """
+        Handle the response to a memory request for the backend type.
+        """
+        event = ct.cast(event, ct.POINTER(memory_response)).contents
+        backend_type = ct.cast(event.payload_addr, ct.POINTER(ct.c_int)).contents
+        bpf_collector.set_backend_type(backend_type.value)
+        return 0
+
 
 class InstrumentationFlags(IntEnum):
     """
@@ -613,6 +627,10 @@ class CollectorOptions:
     """
 
     enable_perf_events: bool = True
+    sample_freq: int = 300
+
+
+T = TypeVar("T", bound="BPFCollector")
 
 
 class BPFCollector:
@@ -625,6 +643,7 @@ class BPFCollector:
     """
 
     options_cls: Type[CollectorOptions] = CollectorOptions
+    event_handler_cls: Type[EventHandler] = EventHandler
 
     ExecEndFuncs = [
         "ExecEndAgg",
@@ -685,16 +704,19 @@ class BPFCollector:
         self.program = str(self.metadata.program).encode("utf8")
         self.bpf = self.prepare_bpf()
         self.setup_bpf_state()
-        self.event_handler: EventHandler = EventHandler()
+        self.event_handler: EventHandler = self.event_handler_cls()
         self.update_struct_defs()
         self.is_running = False
         self.current_query: Optional[Query] = None
         self.background_thread: Optional[Thread] = None
+        self.lock = Lock()
+        self.sample_freq = options.sample_freq
+        self.backend_type: Optional[IntEnum] = None
 
     @classmethod
     def from_pid(
-        cls, pid: int, options: CollectorOptions = CollectorOptions()
-    ) -> BPFCollector:
+        cls: Type[T], pid: int, options: CollectorOptions = CollectorOptions()
+    ) -> T:
         """
         Build a BPFCollector from a pid.
         """
@@ -858,7 +880,40 @@ class BPFCollector:
         """
         Attach the required probes for this collector.
         """
-        raise NotImplementedError()
+        if self.options.enable_perf_events:
+            self.bpf.attach_perf_event(
+                ev_type=PerfType.SOFTWARE,
+                ev_config=PerfSWConfig.CPU_CLOCK,
+                fn_name=b"perf_event",
+                pid=self.pid,
+                sample_freq=self.sample_freq,
+            )
+
+    def _start_info_collection(self) -> None:
+        """
+        Start gathering information in the background.
+        """
+        # Now send a request know which type of backend we are in, so that we know how to attach.
+        addr = self.metadata.global_variable("MyBackendType")
+        if addr is None:
+            raise KeyError("Could not find global variable MyBackendType")
+        req = self.build_memory_request(
+            EventType.MemoryBackendType,
+            Id128.from_int(addr),
+            base_addr=addr,
+            base_type=ct.c_int,
+            path=[],
+        )
+        self.send_memory_request(req)
+
+    def set_backend_type(self, backend_type: int) -> None:
+        """
+        Sets the backend_type of this collector from it's numerical value.
+        """
+        backend_type_enum = self.metadata.enums.BackendType
+        if backend_type_enum is None:
+            raise ValueError("Could not locate enum BackendType definition.")
+        self.backend_type = backend_type_enum(backend_type)
 
     def start(self) -> None:
         """
@@ -871,16 +926,9 @@ class BPFCollector:
         self.bpf[b"event_ring"].open_ring_buffer(self._handle_event)
         self.attach_probes()
         self.is_running = True
-        if self.options.enable_perf_events:
-            self.bpf.attach_perf_event(
-                ev_type=PerfType.SOFTWARE,
-                ev_config=PerfSWConfig.CPU_CLOCK,
-                fn_name=b"perf_event",
-                pid=self.pid,
-                sample_freq=1200,
-            )
         self.background_thread = Thread(target=self.background_polling, args=(100,))
         self.background_thread.start()
+        self._start_info_collection()
         print("eBPF collector started")
 
     def stop(self) -> None:
@@ -905,6 +953,10 @@ class BPFCollector:
         return self.event_handler.handle_event(self, data)
 
     def _optional_code(self) -> str:
+        """
+        Load additional code, depending on options or the specific
+        Collector type.
+        """
         buf = ""
         if self.options.enable_perf_events:
             buf += load_c_file("perf.c")
@@ -949,10 +1001,11 @@ class BPFCollector:
                     f"Cannot dereference field {part} from type {current_type}"
                 )
         # For convenience, support the last field as a pointer.
-        if issubclass(current_type, DWARFPointer):
+        if issubclass(current_type, DWARFPointer) or current_type == ct.c_char_p:
             memory_path[current_idx + 1] = 0
             mempath_length += 1
         size = get_size(current_type, dereference=True)
+
         return memory_request(
             event_type=event_type,
             requestId=requestId,
@@ -1021,6 +1074,7 @@ class QueryTracerBPFCollector(BPFCollector):
         super().__init__(metadata, options)
 
     def attach_probes(self) -> None:
+        super().attach_probes()
         self._attach_uprobe("PortalDrop", "portaldrop_enter")
         self._attach_uretprobe("PortalDrop", "portaldrop_return")
         self._attach_uprobe("standard_ExecutorStart", "executorstart_enter")
@@ -1059,4 +1113,3 @@ class QueryTracerBPFCollector(BPFCollector):
             self.bpf[b"discovery_enabled"][ct.c_int(2)] = ct.c_bool(
                 self.options.enable_query_discovery
             )
-        return bpf

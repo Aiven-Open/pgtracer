@@ -47,7 +47,7 @@ from elftools.dwarf.locationlists import LocationParser
 from elftools.dwarf.ranges import BaseAddressEntry, RangeEntry
 from elftools.elf.elffile import ELFFile
 from elftools.elf.sections import Section
-from psutil import Process
+from pypsutil import Process
 
 from .eh_frame_hdr import EhFrameHdr
 
@@ -63,12 +63,19 @@ class MappedRegion:
     """
 
     def __init__(
-        self, path: str, start: int, end: int, real_path: Optional[Path] = None
+        self,
+        path: str,
+        start: int,
+        end: int,
+        offset: int = 0,
+        real_path: Optional[Path] = None,
     ):
         self.path = path
         self.start = start
         self.end = end
+        self.offset = offset
         self.real_path = real_path
+        self.submaps: Dict[int, MappedRegion] = {offset: self}
 
     @cached_property
     def eh_frame_hdr(self) -> Optional[EhFrameHdr]:
@@ -80,14 +87,23 @@ class MappedRegion:
         with self.real_path.open("rb") as elf:
             return EhFrameHdr.load_eh_frame_hdr(ELFFile(elf))
 
+    def update(self, region: MappedRegion) -> None:
+        """
+        Update a mapped region from another one with the same file.
+        """
+        self.submaps[region.offset] = region
+        self.start = min(self.start, region.start)
+        self.end = max(self.end, region.end)
+
 
 def get_mapped_regions(process: Process, root: Path) -> List[MappedRegion]:
     """
     Returns a list, sorted in the start region order.
     """
     mapped_regions: Dict[str, MappedRegion] = {}
-    for mmap in process.memory_maps(grouped=False):
-        start, end = tuple(int(part, 16) for part in mmap.addr.split("-"))
+    for mmap in process.memory_maps():
+        start = mmap.addr_start
+        end = mmap.addr_end
         # Update it
         mapped_region = mapped_regions.get(mmap.path)
         if mapped_region is None:
@@ -96,11 +112,19 @@ def get_mapped_regions(process: Process, root: Path) -> List[MappedRegion]:
                 real_path = root / Path(mmap.path).relative_to("/")
                 if not real_path.exists():
                     real_path = None
-            mapped_region = MappedRegion(mmap.path, start, end, real_path)
+            mapped_region = MappedRegion(
+                mmap.path, start, end, real_path=real_path, offset=mmap.offset
+            )
             mapped_regions[mmap.path] = mapped_region
             continue
-        mapped_region.start = min(mapped_region.start, start)
-        mapped_region.end = max(mapped_region.end, end)
+        new_mapped_region = MappedRegion(
+            mmap.path,
+            start,
+            end,
+            offset=mmap.offset,
+            real_path=mapped_region.real_path,
+        )
+        mapped_region.update(new_mapped_region)
     return sorted(mapped_regions.values(), key=attrgetter("start"))
 
 
@@ -505,21 +529,29 @@ class Struct:
                 raise KeyError(f"Unknown struct named {typename}")
         elif typedie.tag == "DW_TAG_pointer_type":
             # Look up the type this points to.
-            pointed_type = cls._get_type(typedie)
-            if issubclass(pointed_type, Struct):
-                dtype = pointed_type.pointer_type()
-            elif issubclass(pointed_type, DWARFPointer):
-                raise NotImplementedError("We don't support pointers to pointers yet")
-            elif issubclass(pointed_type, _CData):
-                dtype = ct.POINTER(pointed_type)
+            if "DW_AT_type" not in typedie.attributes:
+                dtype = ct.c_void_p
             else:
-                raise NotImplementedError(
-                    f"No idea how to get a pointer to {pointed_type}"
-                )
+                pointed_type = cls._get_type(typedie)
+                if issubclass(pointed_type, Struct):
+                    dtype = pointed_type.pointer_type()
+                elif issubclass(pointed_type, DWARFPointer):
+                    raise NotImplementedError(
+                        "We don't support pointers to pointers yet"
+                    )
+                elif issubclass(pointed_type, _CData):
+                    dtype = ct.POINTER(pointed_type)
+                else:
+                    raise NotImplementedError(
+                        f"No idea how to get a pointer to {pointed_type}"
+                    )
         elif typedie.tag == "DW_TAG_enumeration_type":
             dtype = ct.c_int
         elif typedie.tag == "DW_TAG_const_type":
             dtype = cls._get_type(typedie)
+        elif typedie.tag == "DW_TAG_subroutine_type":
+            # Ignore subroutine for now
+            dtype = ct.c_void_p
         else:
             raise ValueError(f"Did not expect type with {typedie.tag}")
         return dtype
@@ -708,7 +740,9 @@ class ProcessMetadata:
         self.rangelists = self.dwarf_info.range_lists()
         self.location_parser = LocationParser(self.dwarf_info.location_lists())
 
-    def map_for_addr(self, addr: int) -> Optional[MappedRegion]:
+    def map_for_addr(
+        self, addr: int, look_into_submap: bool = False
+    ) -> Optional[MappedRegion]:
         """
         Returns the map containing the given addr.
         """
@@ -717,6 +751,13 @@ class ProcessMetadata:
         idx = bisect_right(list(map(attrgetter("start"), self.maps)), addr)
         mmap = self.maps[idx - 1]
         if mmap.start <= addr < mmap.end:
+            if look_into_submap:
+                # Now look into this map's submaps
+                all_submaps = list(mmap.submaps.values())
+                idx = bisect_right(
+                    list(map(attrgetter("start"), all_submaps)), addr - mmap.start
+                )
+                mmap = all_submaps[idx - 1]
             return mmap
         return None
 
@@ -806,6 +847,7 @@ class ProcessMetadata:
                         "DW_TAG_subprogram",
                         "DW_TAG_structure_type",
                         "DW_TAG_inlined_subroutine",
+                        "DW_TAG_variable",
                     ):
                         self.naive_index[die.tag][name].add((die.offset, cu.cu_offset))
         self._dump_naive_index()
