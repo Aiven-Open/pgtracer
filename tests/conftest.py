@@ -23,6 +23,7 @@ from pgtracer.ebpf.collector import (
     InstrumentationFlags,
     QueryTracerBPFCollector,
 )
+from pgtracer.ebpf.guc import GUCTracerBPFCollector
 from pgtracer.utils import resolve_container_pid
 
 
@@ -152,7 +153,6 @@ def make_collector(
         # If we have a container, look into it to translate the backend_pid
         # to the host namespace.
         backend_pid = resolve_container_pid(config.getoption("container"), backend_pid)
-    kwargs.setdefault("enable_nodes_collection", True)
     options = cls.options_cls(**kwargs)
     collector = cls.from_pid(pid=backend_pid, options=options)
     collector.start()
@@ -162,6 +162,7 @@ def make_collector(
 @pytest.fixture
 def querytracer_factory(connection, request):
     def factory_func(**kwargs):
+        kwargs.setdefault("enable_nodes_collection", True)
         return make_collector(
             QueryTracerBPFCollector, connection, request.config, **kwargs
         )
@@ -176,7 +177,12 @@ def querytracer(
     """
     Returns a bpfcollector associated to the current connection.
     """
-    collector = make_collector(QueryTracerBPFCollector, connection, request.config)
+    collector = make_collector(
+        QueryTracerBPFCollector,
+        connection,
+        request.config,
+        enable_nodes_collection=True,
+    )
     yield collector
     collector.stop()
 
@@ -197,5 +203,15 @@ def querytracer_instrumented(
         enable_query_discovery=True,
         enable_nodes_collection=True,
     )
+    yield collector
+    collector.stop()
+
+
+@pytest.fixture
+def guctracer(request: FixtureRequest, connection):
+    """
+    Fixture returning an instance of a GUCTracer.
+    """
+    collector = make_collector(GUCTracerBPFCollector, connection, request.config)
     yield collector
     collector.stop()
