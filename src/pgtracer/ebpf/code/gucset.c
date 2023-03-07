@@ -49,9 +49,14 @@ int process_guc_uprobe(struct pt_regs *ctx)
 			continue;
 		}
 		int * payload = (int *) &(guc_request.payload);
-		bpf_trace_printk("PAYLOAD IS: %d asked size is: %d", *payload, guc_request.guc_size);
+		/*
+		 * This code is unreachable, but it makes the ebpf verifier happy
+		 */
+		if ( size >= GUC_MAX_LENGTH)
+		{
+			size = GUC_MAX_LENGTH;
+		}
 		ret = bpf_probe_write_user((void *) guc_request.guc_location, &(guc_request.payload), size);
-		bpf_trace_printk("Just wrote some data size: %d ! ret: %d", size | 0, ret);
 		guc_response->status = (ret >= 0);
 		event_ring.ringbuf_submit(guc_response, 0);
 		i++;
