@@ -29,4 +29,8 @@ def test_setting_one_guc(guctracer, connection):
             sleep(0.1)
         with connection.execute("show work_mem") as cur:
             result = cur.fetchall()
-            assert result[0][0] == "64kB"
+            val = result[0][0]
+            # Depending on the version, it can come back as str or bytes
+            if isinstance(val, bytes):
+                val = val.decode("utf8")
+            assert val == "64kB"
