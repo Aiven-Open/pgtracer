@@ -75,6 +75,7 @@ jobs:
           persist-credentials: false
       - id: dependencies
         run: |
+          sudo apt update
           sudo apt install dnf systemd-container
           sudo apt install postgresql-client
           sudo ./tests/scripts/setup_fedora_container.sh
