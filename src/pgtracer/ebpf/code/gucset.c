@@ -14,6 +14,7 @@ struct guc_response_t {
 
 BPF_QUEUE(gucs_to_set, struct guc_request_t, 128);
 
+
 /* This will be attached at various points in the program flow,
  * to override GUCs as seen fit.
  * */
@@ -38,25 +39,11 @@ int process_guc_uprobe(struct pt_regs *ctx)
 			return 1;
 		}
 		guc_response->guc_location = guc_request.guc_location;
-		size = 1;
-		if (guc_request.guc_size > 0)
-			size = guc_request.guc_size;
-		if (size <= 0 || size >= GUC_MAX_LENGTH || guc_request.guc_size <= 0)
-		{
-			guc_response->status = false;
-			event_ring.ringbuf_submit(guc_response, 0);
-			i++;
-			continue;
-		}
-		int * payload = (int *) &(guc_request.payload);
-		/*
-		 * This code is unreachable, but it makes the ebpf verifier happy
-		 */
-		if ( size >= GUC_MAX_LENGTH)
-		{
-			size = GUC_MAX_LENGTH;
-		}
-		ret = bpf_probe_write_user((void *) guc_request.guc_location, &(guc_request.payload), size);
+		size = guc_request.guc_size;
+		clamp_umax(size, GUC_MAX_LENGTH);
+		ret = -1;
+		if (size > 0 && guc_request.guc_size <= GUC_MAX_LENGTH)
+			ret = bpf_probe_write_user((void *) guc_request.guc_location, &(guc_request.payload), size);
 		guc_response->status = (ret >= 0);
 		event_ring.ringbuf_submit(guc_response, 0);
 		i++;

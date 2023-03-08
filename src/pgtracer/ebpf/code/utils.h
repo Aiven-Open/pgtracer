@@ -7,6 +7,16 @@
 
 #include "data.h"
 
+/* Clamp a value to a max value, and make the eBPF verifier happy. */
+#define clamp_umax(VAR, UMAX)						\
+	asm volatile (							\
+		"if %0 <= %[max] goto +1\n"				\
+		"%0 = %[max]\n"						\
+		: "+r"(VAR)						\
+		: [max]"i"(UMAX)					\
+	)
+
+
 static u64 pgts_to_unixts(u64 pgts)
 {
 	ulong secs = (ulong) pgts / 1000000;
