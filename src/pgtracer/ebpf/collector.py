@@ -122,8 +122,7 @@ class EventType(IntEnum):
     MemoryResponseQueryInstr = 9
     MemoryResponseNodeInstr = 10
     MemoryNodeData = 11
-    MemoryBackendType = 12
-    GUCResponse = 14
+    GUCResponse = 12
 
 
 instrument_type = ct.c_byte * 0
@@ -593,17 +592,6 @@ class EventHandler:
                     self._gather_node_info(bpf_collector, node.addr)
         return 0
 
-    def handle_MemoryBackendType(
-        self, bpf_collector: BPFCollector, event: ct._CData
-    ) -> int:
-        """
-        Handle the response to a memory request for the backend type.
-        """
-        event = ct.cast(event, ct.POINTER(memory_response)).contents
-        backend_type = ct.cast(event.payload_addr, ct.POINTER(ct.c_int)).contents
-        bpf_collector.set_backend_type(backend_type.value)
-        return 0
-
 
 class InstrumentationFlags(IntEnum):
     """
@@ -889,32 +877,6 @@ class BPFCollector:
                 sample_freq=self.sample_freq,
             )
 
-    def _start_info_collection(self) -> None:
-        """
-        Start gathering information in the background.
-        """
-        # Now send a request know which type of backend we are in, so that we know how to attach.
-        addr = self.metadata.global_variable("MyBackendType")
-        if addr is None:
-            raise KeyError("Could not find global variable MyBackendType")
-        req = self.build_memory_request(
-            EventType.MemoryBackendType,
-            Id128.from_int(addr),
-            base_addr=addr,
-            base_type=ct.c_int,
-            path=[],
-        )
-        self.send_memory_request(req)
-
-    def set_backend_type(self, backend_type: int) -> None:
-        """
-        Sets the backend_type of this collector from it's numerical value.
-        """
-        backend_type_enum = self.metadata.enums.BackendType
-        if backend_type_enum is None:
-            raise ValueError("Could not locate enum BackendType definition.")
-        self.backend_type = backend_type_enum(backend_type)
-
     def start(self) -> None:
         """
         Starts the bpf collector.
@@ -928,7 +890,6 @@ class BPFCollector:
         self.is_running = True
         self.background_thread = Thread(target=self.background_polling, args=(100,))
         self.background_thread.start()
-        self._start_info_collection()
         print("eBPF collector started")
 
     def stop(self) -> None:
