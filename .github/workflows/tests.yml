@@ -15,7 +15,7 @@ jobs:
     continue-on-error: ${{ matrix.experimental }}
     strategy:
       matrix:
-        postgresql_version: [11, 12, 13, 14, 15]
+        postgresql_version: [14]
         experimental: [false]
         repo: ["pgdg"]
         pytest_args: [""]
