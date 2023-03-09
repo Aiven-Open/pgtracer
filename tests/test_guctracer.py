@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 from time import sleep
 from unittest.mock import patch
 
@@ -22,7 +23,8 @@ def test_setting_one_guc(guctracer, connection):
     ):
         # Set work_mem to 64kB
         guctracer.set_guc("work_mem", 64)
-        while not guc_has_been_set:
+        start = datetime.now()
+        while not guc_has_been_set and (datetime.now() - start) < timedelta(seconds=20):
             # Generate some activity to trigger the probe
             with connection.execute("SELECT 1") as cur:
                 pass
