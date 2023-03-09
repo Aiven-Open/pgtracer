@@ -241,6 +241,7 @@ def test_query_discovery(querytracer_factory, connection):
                 enable_perf_events=True,
                 enable_query_discovery=True,
                 enable_nodes_collection=True,
+                sample_freq=1200,
             )
             # And wait for the query to finish
             thread.join()
