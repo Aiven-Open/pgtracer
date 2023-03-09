@@ -207,7 +207,6 @@ def test_query_discovery(querytracer_factory, connection):
     """
     Test that information is gathered during a query.
     """
-
     events = defaultdict(int)
 
     def event_handler_observer(method_name):
@@ -236,16 +235,18 @@ def test_query_discovery(querytracer_factory, connection):
             ) as s """,
         )
         # Now set up the collector.
-        collector = querytracer_factory(
-            instrument_flags=InstrumentationFlags.ALL,
-            enable_perf_events=True,
-            enable_query_discovery=True,
-            enable_nodes_collection=True,
-        )
-        # And wait for the query to finish
-        thread.join()
-        # Wait a few seconds more to make sure collector has gathered all info
-        sleep(3)
-        collector.stop()
+        try:
+            collector = querytracer_factory(
+                instrument_flags=InstrumentationFlags.ALL,
+                enable_perf_events=True,
+                enable_query_discovery=True,
+                enable_nodes_collection=True,
+            )
+            # And wait for the query to finish
+            thread.join()
+            # Wait a few seconds more to make sure collector has gathered all info
+            sleep(3)
+        finally:
+            collector.stop()
     assert events["handle_StackSample"] > 0
     assert events["handle_MemoryNodeData"] > 0
