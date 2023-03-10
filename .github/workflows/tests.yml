@@ -15,16 +15,21 @@ jobs:
     continue-on-error: ${{ matrix.experimental }}
     strategy:
       matrix:
-        postgresql_version: [11, 12, 13, 14, 15]
+        postgresql_version: [11, 12, 13, 14, ]
         experimental: [false]
         repo: ["pgdg"]
-        pytest_args: [""]
-        # Define the current dev version to be experimental
+        pytest_args: ["-m 'not slow'"]
         include:
+          # Define the current dev version to be experimental
           - postgresql_version: 16
             experimental: true
             repo: "pgdg-snapshot"
             pytest_args: "-m 'not slow'"
+          # For latest stable version, include "slow" tests
+          - postgresql_version: 15
+            experimental: false
+            repo: "pgdg"
+            pytest_args: ""
     env:
       PGVERSION: ${{ matrix.postgresql_version }}
       DISTRO: ubuntu

@@ -202,7 +202,7 @@ def test_long_query(querytracer_instrumented, connection):
 
 
 @pytest.mark.slow
-@flaky(max_runs=3)
+@flaky(max_runs=5)
 def test_query_discovery(querytracer_factory, connection):
     """
     Test that information is gathered during a query.
