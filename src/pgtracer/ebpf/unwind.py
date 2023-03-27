@@ -511,7 +511,7 @@ class Frame:
             die = self.die
             while die.tag == "DW_TAG_inlined_subroutine":
                 if self.next_frame is None:
-                    raise Exception("Cannot find parent frame of inlined subroutine")
+                    raise ValueError("Cannot find parent frame of inlined subroutine")
                 die = self.next_frame.die
             frameexpr = self.processmetadata.location_parser.parse_from_attribute(
                 die.attributes["DW_AT_frame_base"],
@@ -529,7 +529,7 @@ class Frame:
             # We evaluate the expression in the calling frame.
             for op in expr.args[0]:
                 if self.next_frame is None:
-                    raise Exception(
+                    raise ValueError(
                         "Cannot find parent frame for evaluation of entry point"
                     )
                 rv = self.next_frame.eval_expr(op, ctype, dwarf_stack)
@@ -571,13 +571,13 @@ class UnwindAddressSpace:
         # 0 takes the default byteorder
         self.unw_addr_space = create_addr_space(ct.byref(self.accessors), 0)
         if self.unw_addr_space == 0:
-            raise Exception("Something bad happened in create_addr_space")
+            raise RuntimeError("Something bad happened in create_addr_space")
         self.unw_cursor = unw_cursor_t()
         retval = init_remote(
             ct.byref(self.unw_cursor), self.unw_addr_space, 0
         )  # Don't use the opaque pointer for now
         if retval != 0:
-            raise Exception("Something bad happened in init_remote")
+            raise RuntimeError("Something bad happened in init_remote")
 
     def find_proc_info(
         self,

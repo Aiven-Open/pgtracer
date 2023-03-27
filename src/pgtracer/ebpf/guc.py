@@ -12,14 +12,7 @@ from elftools.elf.elffile import ELFFile
 
 from pgtracer.utils import readcstr
 
-from .collector import (
-    BPFCollector,
-    CollectorOptions,
-    EventHandler,
-    EventType,
-    Id128,
-    load_c_file,
-)
+from .collector import BPFCollector, CollectorOptions, EventHandler, load_c_file
 from .dwarf import ProcessMetadata, Struct
 
 GUC_MAX_LENGTH = 128

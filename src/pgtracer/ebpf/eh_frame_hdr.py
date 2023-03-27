@@ -163,7 +163,9 @@ class EhFrameHdr:
             (addr, loc) = self.read_entry(offset=offset)
             # We found the looked up key, now we need to find the right tag
             if addrkey == addr or (minidx == idx and addrkey > addr):
-                fde = self.cfi._parse_entry_at(loc - self.cfi.address)
+                fde = self.cfi._parse_entry_at(
+                    loc - self.cfi.address
+                )  # pylint: disable=protected-access
                 if addrkey < fde.header.initial_location + fde.header.address_range:
                     return fde
                 # If the key is not in range, then we don't have an entry.
@@ -183,6 +185,8 @@ class EhFrameHdr:
         eh_frame_hdr = elf_file.get_section_by_name(".eh_frame_hdr")
         if eh_frame_hdr is None:
             return None
+
+        # pylint: disable=protected-access
         eh_frame_hdr = elf_file._read_dwarf_section(
             eh_frame_hdr, relocate_dwarf_sections=True
         )

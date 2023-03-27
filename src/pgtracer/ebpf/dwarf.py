@@ -710,7 +710,7 @@ class ProcessMetadata:
         self.buildid = extract_buildid(elffile)
         elffile = find_debuginfo(elffile, root=self.root, buildid=self.buildid)
         if elffile is None:
-            raise Exception(f"Couldn't find debug info for {self.program}")
+            raise SystemError(f"Couldn't find debug info for {self.program}")
         self.elffile = elffile
         self.dwarf_info = self.elffile.get_dwarf_info()
         self.maps = get_mapped_regions(process, get_actual_root(process.pid))
@@ -776,7 +776,7 @@ class ProcessMetadata:
         for mmap in self.maps:
             if mmap.path == str(self.program_raw):
                 return mmap.start
-        raise Exception("Could not find a memory map for {self.program_raw}")
+        raise SystemError("Could not find a memory map for {self.program_raw}")
 
     @property
     def stack_top(self) -> int:
@@ -786,7 +786,7 @@ class ProcessMetadata:
         for mmap in self.maps:
             if mmap.path == "[stack]":
                 return mmap.end
-        raise Exception("Could not find a [stack] memory map")
+        raise SystemError("Could not find a [stack] memory map")
 
     @property
     def cache_path(self) -> Optional[Path]:

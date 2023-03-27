@@ -200,13 +200,13 @@ class Query:
         bufusage = self.instrument.bufusage
         # FIXME: don't assume a fixed block size, either pass it as an option
         # or query the actual value from the DB
-        BLKSIZE = 8192
+        blksize = 8192
         total_blks = (
             bufusage.shared_blks_read.value
             + bufusage.local_blks_read.value
             + bufusage.temp_blks_read.value
         )
-        total_bytes = total_blks * BLKSIZE
+        total_bytes = total_blks * blksize
         if total_bytes == 0:
             return None
         bytes_hit = total_bytes - self.io_counters["R"]

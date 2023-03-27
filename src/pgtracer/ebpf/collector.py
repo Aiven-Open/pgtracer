@@ -602,6 +602,7 @@ class EventHandler:
         ev = ct.cast(event, ct.POINTER(memory_account)).contents
         if bpf_collector.current_query:
             bpf_collector.current_query.memallocs.update(ev)
+        return 0
 
 
 class InstrumentationFlags(IntEnum):
