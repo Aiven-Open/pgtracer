@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from ..ebpf.unwind import UnwindAddressSpace, stack_data_t
 from ..utils import timespec_to_timedelta
+from .memory import MemoryAllocations
 from .plan import PlanState
 
 if TYPE_CHECKING:
@@ -100,6 +101,7 @@ class Query:
         self.search_path = search_path
         self.nodes: Dict[int, PlanState] = {}
         self.io_counters: Dict[str, int] = defaultdict(lambda: 0)
+        self.memallocs: MemoryAllocations = MemoryAllocations()
 
     @property
     def root_node(self) -> PlanState:

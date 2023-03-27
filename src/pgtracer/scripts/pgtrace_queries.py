@@ -59,6 +59,7 @@ def print_query(query: Query, options: QueryTracerOptions) -> None:
     mapping["startup_cost"] = str(query.startup_cost)
     mapping["total_cost"] = str(query.total_cost)
     mapping["plan_rows"] = str(query.plan_rows)
+    mapping["memusage"] = str(query.memallocs)
     if options.instrument_flags & InstrumentationFlags.TIMER:
         mapping["runtime"] = str(query.runtime)
     if options.instrument_flags & InstrumentationFlags.BUFFERS:
