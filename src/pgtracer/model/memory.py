@@ -46,42 +46,42 @@ class MemoryAllocations:
     current_mem_peak: int = 0
 
     @property
-    def mmap_total(self):
+    def mmap_total(self) -> int:
         """
         Compute the resulting mmaped total.
         """
         return self.mmap_alloc - self.mmap_free
 
     @property
-    def sbrk_total(self):
+    def sbrk_total(self) -> int:
         """
         Compute the resulting sbrk total.
         """
         return self.sbrk_alloc - self.sbrk_free
 
     @property
-    def total_malloc(self):
+    def total_malloc(self) -> int:
         """
         Compute the total memory diff.
         """
         return self.mmap_total + self.sbrk_total
 
-    def update(self, memory_account: memory_account):
+    def update(self, memory_account_event: memory_account) -> None:
         """
         Update the current totals.
         """
-        if memory_account.kind == MemoryAllocType.Sbrk:
-            self.current_running_sbrk += memory_account.size
-            if memory_account.size > 0:
-                self.sbrk_alloc += memory_account.size
+        if memory_account_event.kind == MemoryAllocType.Sbrk:
+            self.current_running_sbrk += memory_account_event.size
+            if memory_account_event.size > 0:
+                self.sbrk_alloc += memory_account_event.size
             else:
-                self.sbrk_free += -memory_account.size
-        elif memory_account.kind == MemoryAllocType.Mmap:
-            self.current_running_mmap += memory_account.size
-            if memory_account.size > 0:
-                self.mmap_alloc += memory_account.size
+                self.sbrk_free += -memory_account_event.size
+        elif memory_account_event.kind == MemoryAllocType.Mmap:
+            self.current_running_mmap += memory_account_event.size
+            if memory_account_event.size > 0:
+                self.mmap_alloc += memory_account_event.size
             else:
-                self.mmap_free += -memory_account.size
+                self.mmap_free += -memory_account_event.size
         self.current_mem_peak = max(
             self.current_mem_peak, self.current_running_sbrk + self.current_running_mmap
         )
