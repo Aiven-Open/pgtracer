@@ -16,10 +16,10 @@ from threading import Lock, Thread
 from time import sleep
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, TypeVar, Union
 
-from bcc import BPF, PerfSWConfig, PerfType
+from bcc import BPF, USDT, PerfSWConfig, PerfType
 from pypsutil import Process
 
-from ..model import PlanState, Query
+from ..model import MemoryAllocType, PlanState, Query, memory_account
 from .dwarf import DWARFPointer, ProcessMetadata, Struct, get_size
 from .unwind import stack_data_t
 
@@ -123,6 +123,7 @@ class EventType(IntEnum):
     MemoryResponseNodeInstr = 10
     MemoryNodeData = 11
     GUCResponse = 12
+    MemoryAccount = 13
 
 
 instrument_type = ct.c_byte * 0
@@ -592,6 +593,16 @@ class EventHandler:
                     self._gather_node_info(bpf_collector, node.addr)
         return 0
 
+    def handle_MemoryAccount(
+        self, bpf_collector: BPFCollector, event: ct._CData
+    ) -> int:
+        """
+        Handle MemoryAccount events produced by malloc instrumentation.
+        """
+        ev = ct.cast(event, ct.POINTER(memory_account)).contents
+        if bpf_collector.current_query:
+            bpf_collector.current_query.memallocs.update(ev)
+
 
 class InstrumentationFlags(IntEnum):
     """
@@ -690,6 +701,10 @@ class BPFCollector:
         self.pid = metadata.pid
         self.metadata = metadata
         self.program = str(self.metadata.program).encode("utf8")
+        self.usdt_ctx = USDT(self.pid)
+        self.usdt_ctx.enable_probe(probe="libc:memory_sbrk_less", fn_name="sbrk_less")
+        self.usdt_ctx.enable_probe(probe="libc:memory_sbrk_more", fn_name="sbrk_more")
+
         self.bpf = self.prepare_bpf()
         self.setup_bpf_state()
         self.event_handler: EventHandler = self.event_handler_cls()
@@ -990,6 +1005,7 @@ class BPFCollector:
         buf += defines_dict_to_c(self.struct_offsets_defines)
         buf += defines_dict_to_c(self.make_struct_sizes_dict())
         buf += intenum_to_c(EventType)
+        buf += intenum_to_c(MemoryAllocType)
         buf += intenum_to_c(self.make_global_variables_enum())
         buf += load_c_file("program.c")
         buf += self._optional_code()
@@ -998,7 +1014,12 @@ class BPFCollector:
         # Suppress some common warnings depending on bcc / kernel combinations
         cflags.append("-Wno-macro-redefined")
         cflags.append("-Wno-ignored-attributes")
-        bpf = BPF(text=buf.encode("utf8"), cflags=cflags, debug=0)
+        bpf = BPF(
+            text=buf.encode("utf8"),
+            cflags=cflags,
+            debug=0,
+            usdt_contexts=[self.usdt_ctx],
+        )
         return bpf
 
     def setup_bpf_state(self) -> None:
@@ -1041,6 +1062,12 @@ class QueryTracerBPFCollector(BPFCollector):
         self._attach_uprobe("standard_ExecutorStart", "executorstart_enter")
         self._attach_uprobe("standard_ExecutorRun", "executorrun_enter")
         self._attach_uprobe("ExecutorFinish", "executorfinish_enter")
+        self._attach_uprobe("mmap", "mmap_enter")
+        self.bpf.attach_uprobe(name="c", sym="mmap", fn_name="mmap_enter", pid=self.pid)
+        self.bpf.attach_uprobe(
+            name="c", sym="munmap", fn_name="munmap_enter", pid=self.pid
+        )
+        self._attach_uprobe("munmap", "munmap_enter")
         if self.options.enable_nodes_collection:
             self._attach_uprobe("ExecProcNodeFirst", "execprocnodefirst_enter")
             for func in self.ExecEndFuncs:
@@ -1062,6 +1089,7 @@ class QueryTracerBPFCollector(BPFCollector):
         if self.options.enable_nodes_collection:
             buf += load_c_file("plan.c")
         buf += load_c_file("block_rq.c")
+        buf += load_c_file("memusage.c")
         return buf
 
     def setup_bpf_state(self) -> None:
