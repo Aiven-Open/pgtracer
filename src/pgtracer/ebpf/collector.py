@@ -703,8 +703,7 @@ class BPFCollector:
         self.metadata = metadata
         self.program = str(self.metadata.program).encode("utf8")
         self.usdt_ctx = USDT(self.pid)
-        self.usdt_ctx.enable_probe(probe="libc:memory_sbrk_less", fn_name="sbrk_less")
-        self.usdt_ctx.enable_probe(probe="libc:memory_sbrk_more", fn_name="sbrk_more")
+        self.enable_usdt_probes(self.usdt_ctx)
 
         self.bpf = self.prepare_bpf()
         self.setup_bpf_state()
@@ -893,6 +892,11 @@ class BPFCollector:
                 sample_freq=self.sample_freq,
             )
 
+    def enable_usdt_probes(self, usdt: USDT) -> None:
+        """
+        Enable USDT probes.
+        """
+
     def start(self) -> None:
         """
         Starts the bpf collector.
@@ -1073,6 +1077,10 @@ class QueryTracerBPFCollector(BPFCollector):
             self._attach_uprobe("ExecProcNodeFirst", "execprocnodefirst_enter")
             for func in self.ExecEndFuncs:
                 self._attach_uprobe(func, "execendnode_enter")
+
+    def enable_usdt_probes(self, usdt: USDT) -> None:
+        usdt.enable_probe(probe="libc:memory_sbrk_less", fn_name="sbrk_less")
+        usdt.enable_probe(probe="libc:memory_sbrk_more", fn_name="sbrk_more")
 
     @property
     def constant_defines(self) -> Dict[str, int]:
