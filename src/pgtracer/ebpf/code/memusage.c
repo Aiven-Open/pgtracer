@@ -16,7 +16,6 @@ static inline int send_memory_account(long long size, short kind)
 	account->event_type = EventTypeMemoryAccount;
 	account->size = size;
 	account->kind = kind;
-	bpf_trace_printk("Size is %lld", account->size);
 	event_ring.ringbuf_submit(account, 0);
 	return 0;
 }
