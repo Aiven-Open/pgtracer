@@ -8,7 +8,7 @@ import time
 from datetime import timedelta
 from typing import Any, Dict
 
-from pgtracer.ebpf.collector import (
+from pgtracer.ebpf.collector.querytracer import (
     InstrumentationFlags,
     QueryTracerBPFCollector,
     QueryTracerOptions,

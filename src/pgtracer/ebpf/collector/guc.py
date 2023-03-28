@@ -10,10 +10,10 @@ from typing import Any, BinaryIO, Dict, Optional, Tuple, Type
 
 from elftools.elf.elffile import ELFFile
 
-from pgtracer.utils import readcstr
-
-from .collector import BPFCollector, CollectorOptions, EventHandler, load_c_file
-from .dwarf import ProcessMetadata, Struct
+from ...utils import readcstr
+from ..dwarf import ProcessMetadata, Struct
+from . import BPFCollector, CollectorOptions, EventHandler
+from .utils import load_c_file
 
 GUC_MAX_LENGTH = 128
 

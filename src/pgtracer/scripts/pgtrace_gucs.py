@@ -3,7 +3,7 @@ This simple script reads and writes GUCs in a running PostgreSQL backend
 """
 import argparse
 
-from pgtracer.ebpf.guc import GUCTracerBPFCollector, GUCTracerOptions
+from pgtracer.ebpf.collector.guc import GUCTracerBPFCollector, GUCTracerOptions
 
 
 def main() -> None:

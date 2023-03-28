@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from time import sleep
 from unittest.mock import patch
 
-from pgtracer.ebpf.guc import GUCTracerEventHandler
+from pgtracer.ebpf.collector.guc import GUCTracerEventHandler
 
 
 def test_setting_one_guc(guctracer, connection):
@@ -18,7 +18,7 @@ def test_setting_one_guc(guctracer, connection):
         return original_method(event_handler, collector, event)
 
     with patch(
-        f"pgtracer.ebpf.guc.GUCTracerEventHandler.handle_GUCResponse",
+        f"pgtracer.ebpf.collector.guc.GUCTracerEventHandler.handle_GUCResponse",
         observe_guc_response,
     ):
         # Set work_mem to 64kB

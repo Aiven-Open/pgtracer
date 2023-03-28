@@ -18,12 +18,12 @@ from pytest_postgresql.config import get_config
 from pytest_postgresql.executor import PostgreSQLExecutor
 from pytest_postgresql.executor_noop import NoopExecutor
 
-from pgtracer.ebpf.collector import (
-    CollectorOptions,
+from pgtracer.ebpf.collector import CollectorOptions
+from pgtracer.ebpf.collector.guc import GUCTracerBPFCollector
+from pgtracer.ebpf.collector.querytracer import (
     InstrumentationFlags,
     QueryTracerBPFCollector,
 )
-from pgtracer.ebpf.guc import GUCTracerBPFCollector
 from pgtracer.utils import resolve_container_pid
 
 
