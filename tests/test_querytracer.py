@@ -110,6 +110,7 @@ def test_instrumentation(querytracer_instrumented, connection):
     # value depends on the state of malloc and it's configuration. So best thing we can test is that "something"
     # happened
     assert query.memallocs.current_mem_peak > 0
+    assert query.memallocs.total_malloc != 0
 
 
 def test_plans(querytracer_instrumented, connection):
