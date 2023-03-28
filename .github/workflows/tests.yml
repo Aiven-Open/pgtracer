@@ -50,6 +50,8 @@ jobs:
           curl https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/apt.postgresql.org.gpg >/dev/null
           sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-${{ matrix.repo }} main ${{ matrix.postgresql_version }}" > /etc/apt/sources.list.d/pgdg.list'
           sudo apt update
+          # Install postgresql-common so that update alternatives doesn't fail
+          sudo apt install postgresql-common postgresql-client-common
           sudo apt install postgresql-${{matrix.postgresql_version}} postgresql-${{matrix.postgresql_version}}-dbgsym
           sudo pip install -U pip toml
           # Install requirements from pyproject.toml
