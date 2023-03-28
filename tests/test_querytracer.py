@@ -99,6 +99,18 @@ def test_instrumentation(querytracer_instrumented, connection):
         assert tstimedelta(query.instrument.bufusage.temp_blk_read_time) > timedelta(0)
         assert tstimedelta(query.instrument.bufusage.temp_blk_write_time) > timedelta(0)
 
+    # Now do the same query with a big enough work_mem to trigger some memory allocations
+    connection.execute("SET work_mem = '32MB'")
+    querytracer_instrumented.event_handler.query_history = []
+    with connection.execute("SELECT * FROM generate_series(1, 10000) as t") as cur:
+        pass
+    wait_for_collector(querytracer_instrumented)
+    query = querytracer_instrumented.event_handler.query_history[0]
+    # The reparatition between sbrk / mmap and wether we move sbrk back to it's initial
+    # value depends on the state of malloc and it's configuration. So best thing we can test is that "something"
+    # happened
+    assert query.memallocs.current_mem_peak > 0
+
 
 def test_plans(querytracer_instrumented, connection):
     """
@@ -165,7 +177,6 @@ def background_query(connection, query):
 
 @pytest.mark.slow
 def test_long_query(querytracer_instrumented, connection):
-
     events = defaultdict(int)
 
     def event_handler_observer(method_name):
