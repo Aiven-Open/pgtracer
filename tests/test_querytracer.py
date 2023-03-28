@@ -12,7 +12,10 @@ from unittest.mock import patch
 import pytest
 from flaky import flaky
 
-from pgtracer.ebpf.collector import EventHandler, InstrumentationFlags
+from pgtracer.ebpf.collector.querytracer import (
+    InstrumentationFlags,
+    QueryTracerEventHandler,
+)
 from pgtracer.utils import timespec_to_timedelta as tstimedelta
 
 
@@ -181,7 +184,7 @@ def test_long_query(querytracer_instrumented, connection):
     events = defaultdict(int)
 
     def event_handler_observer(method_name):
-        original_method = getattr(EventHandler, method_name)
+        original_method = getattr(QueryTracerEventHandler, method_name)
 
         def observe_event_handler(event_handler, bpf_collector, event):
             events[method_name] += 1
@@ -196,7 +199,7 @@ def test_long_query(querytracer_instrumented, connection):
         ):
             stack.enter_context(
                 patch(
-                    f"pgtracer.ebpf.collector.EventHandler.{meth_name}",
+                    f"pgtracer.ebpf.collector.querytracer.QueryTracerEventHandler.{meth_name}",
                     event_handler_observer(meth_name),
                 )
             )
@@ -222,7 +225,7 @@ def test_query_discovery(querytracer_factory, connection):
     events = defaultdict(int)
 
     def event_handler_observer(method_name):
-        original_method = getattr(EventHandler, method_name)
+        original_method = getattr(QueryTracerEventHandler, method_name)
 
         def observe_event_handler(event_handler, bpf_collector, event):
             events[method_name] += 1
@@ -234,7 +237,7 @@ def test_query_discovery(querytracer_factory, connection):
         for meth_name in ("handle_StackSample", "handle_MemoryNodeData"):
             stack.enter_context(
                 patch(
-                    f"pgtracer.ebpf.collector.EventHandler.{meth_name}",
+                    f"pgtracer.ebpf.collector.querytracer.QueryTracerEventHandler.{meth_name}",
                     event_handler_observer(meth_name),
                 )
             )
