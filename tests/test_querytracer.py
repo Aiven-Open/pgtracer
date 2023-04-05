@@ -188,7 +188,7 @@ def test_long_query(querytracer_instrumented, connection):
 
         def observe_event_handler(event_handler, bpf_collector, event):
             events[method_name] += 1
-            return original_method(event_handler, bpf_collector, event)
+            return original_method(event_handler, bpf_collector, event, pid)
 
         return observe_event_handler
 

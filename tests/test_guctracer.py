@@ -12,10 +12,10 @@ def test_setting_one_guc(guctracer, connection):
     guc_has_been_set = False
     original_method = GUCTracerEventHandler.handle_GUCResponse
 
-    def observe_guc_response(event_handler, collector, event):
+    def observe_guc_response(event_handler, collector, event, pid):
         nonlocal guc_has_been_set
         guc_has_been_set = True
-        return original_method(event_handler, collector, event)
+        return original_method(event_handler, collector, event, pid)
 
     with patch(
         f"pgtracer.ebpf.collector.guc.GUCTracerEventHandler.handle_GUCResponse",

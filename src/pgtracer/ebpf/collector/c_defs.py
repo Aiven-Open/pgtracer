@@ -9,6 +9,8 @@ from typing import Dict, List, Tuple, Type
 
 from ..unwind import stack_data_t
 
+BPF_MAP_TYPE_QUEUE = 22
+
 
 class Id128(ct.Structure):
     """
@@ -64,6 +66,8 @@ class EventType(IntEnum):
     MemoryNodeData = 11
     GUCResponse = 12
     MemoryAccount = 13
+    ProcessFork = 14
+    ProcessExit = 15
 
 
 instrument_type = ct.c_byte * 0
@@ -98,13 +102,21 @@ MAX_QUERY_LENGTH = 2048
 MAX_SEARCHPATH_LENGTH = 1024
 
 
+class event_base(ct.Structure):
+    """
+    Common fields for all events.
+    """
+
+    _fields_ = [("event_type", ct.c_short), ("pid", ct.c_int)]
+
+
 class portal_data(StubStructure):
     """
     Represents the portal_data associated to a portal.
     """
 
     _protofields = [
-        ("event_type", ct.c_short),
+        ("event", event_base),
         ("portal_key", Id128),
         ("query_addr", ct.c_ulonglong),
         ("query_id", ct.c_ulonglong),
@@ -123,7 +135,7 @@ class io_req_data(ct.Structure):
     """
 
     _fields_ = [
-        ("event_type", ct.c_short),
+        ("event", event_base),
         ("rwbs", ct.c_char * 8),
         ("bytes", ct.c_ulonglong),
     ]
@@ -151,7 +163,7 @@ class planstate_data(StubStructure):
     """
 
     _protofields = [
-        ("event_type", ct.c_short),
+        ("event", event_base),
         ("portal_key", Id128),
         ("planstate_addr", ct.c_ulonglong),
         ("planstate_tag", ct.c_int),
@@ -174,7 +186,7 @@ class memory_request(ct.Structure):
 
     _fields_ = [
         ("event_type", ct.c_short),
-        ("requestId", Id128),
+        ("request_id", Id128),
         ("path_size", ct.c_int),
         ("size", ct.c_ulonglong),
         ("memory_path", ct.c_ulonglong * MEMORY_PATH_SIZE),
@@ -187,8 +199,8 @@ class memory_response(ct.Structure):
     """
 
     _fields_ = [
-        ("event_type", ct.c_short),
-        ("requestId", Id128),
+        ("event", event_base),
+        ("request_id", Id128),
         ("payload", ct.c_char * MEMORY_REQUEST_MAXSIZE),
     ]
 

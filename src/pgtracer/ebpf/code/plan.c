@@ -11,11 +11,12 @@ int execendnode_enter(struct pt_regs *ctx);
  */
 int execprocnodefirst_enter(struct pt_regs *ctx)
 {
+	##CHECK_POSTMASTER##
 	struct planstate_data_t *node;
 	node = event_ring.ringbuf_reserve(sizeof(struct planstate_data_t));
 	if (!node)
 		return 0;
-	node->event_type = EventTypeExecProcNodeFirst;
+	fill_event_base(&(node->event_base), EventTypeExecProcNodeFirst);
 	record_node((void *) PT_REGS_PARM1(ctx), node, ctx, true);
 	event_ring.ringbuf_submit(node, 0);
 	return 0;
@@ -26,11 +27,12 @@ int execprocnodefirst_enter(struct pt_regs *ctx)
  */
 int execendnode_enter(struct pt_regs *ctx)
 {
+	##CHECK_POSTMASTER##
 	struct planstate_data_t *node;
 	node = event_ring.ringbuf_reserve(sizeof(struct planstate_data_t));
 	if (!node)
 		return 0;
-	node->event_type = EventTypeExecEndNode;
+	fill_event_base(&(node->event_base), EventTypeExecEndNode);
 	record_node((void *) PT_REGS_PARM1(ctx), node, ctx, true);
 	event_ring.ringbuf_submit(node, 0);
 	return 0;

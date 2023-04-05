@@ -9,6 +9,7 @@ The BPFCollector works by combining two things:
 from __future__ import annotations
 
 import ctypes as ct
+import os
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
@@ -17,6 +18,7 @@ from time import sleep
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, TypeVar, Union
 
 from bcc import BPF, USDT, PerfSWConfig, PerfType
+from bcc import lib as bcclib
 from pypsutil import Process
 
 from ...model import MemoryAllocType, Query
@@ -35,6 +37,7 @@ class InvalidStateException(Exception):
     """
 
 
+# pylint: disable=invalid-name
 class EventHandler:
     """
     Base class for handling events.
@@ -55,11 +58,32 @@ class EventHandler:
         which will be able to make sense of the actual struct.
         """
         # All events should be tagged with the event's type
-        event_type = ct.cast(event, ct.POINTER(ct.c_short)).contents.value
-        event_type_name = EventType(event_type).name
+        event_stub = ct.cast(event, ct.POINTER(event_base)).contents
+        event_type_name = EventType(event_stub.event_type).name
+        pid = event_stub.pid
         method_name = f"handle_{event_type_name}"
-        method: Callable[[BPFCollector, ct._CData], int] = getattr(self, method_name)
-        return method(bpf_collector, event)
+        method: Callable[[BPFCollector, ct._CData, int], int] = getattr(
+            self, method_name
+        )
+        return method(bpf_collector, event, pid)
+
+    # pylint: disable=unused-argument
+    def handle_ProcessExit(
+        self, bpf_collector: BPFCollector, event: ct._CData, pid: int
+    ) -> int:
+        """
+        Handle ProcessExit event.
+        """
+        return bpf_collector.cleanup_process(pid)
+
+    # pylint: disable=unused-argument
+    def handle_ProcessFork(
+        self, bpf_collector: BPFCollector, event: ct._CData, pid: int
+    ) -> int:
+        """
+        Handle ProcessEnter event.
+        """
+        return bpf_collector.setup_process(pid)
 
 
 @dataclass
@@ -69,7 +93,7 @@ class CollectorOptions:
     """
 
     enable_perf_events: bool = True
-    sample_freq: int = 300
+    sample_freq: int = 1200
 
 
 T = TypeVar("T", bound="BPFCollector")
@@ -137,14 +161,24 @@ class BPFCollector:
         self,
         metadata: ProcessMetadata,
         options: Optional[CollectorOptions] = None,
+        include_children: bool = False,
     ):
         if options is None:
             options = self.options_cls()
         self.options = options
-        self.pid = metadata.pid
+        self.include_children = include_children
+        self.anon_map_fds: Dict[int, int] = {}
+        self.ppid: Optional[int]
+        if include_children:
+            self.pid = -1
+            self.ppid = metadata.pid
+        else:
+            self.pid = metadata.pid
+            self.ppid = None
+
+        self.usdt_ctx = USDT(metadata.pid)
         self.metadata = metadata
         self.program = str(self.metadata.program).encode("utf8")
-        self.usdt_ctx = USDT(self.pid)
         self.enable_usdt_probes(self.usdt_ctx)
 
         self.bpf = self.prepare_bpf()
@@ -168,8 +202,12 @@ class BPFCollector:
         # FIXME: make this configurable
         cache_dir = Path("~/.cache").expanduser() / "pgtracer"
         process = Process(pid=pid)
+        # Check if we are given the postmaster pid, or a backend.
+        # If our parent is itself a postgres process, then we are instrumenting the whole backend.
+        pprocess = process.parent()
+        include_children = bool(pprocess and not pprocess.name() == "postgres")
         processmetadata = ProcessMetadata(process, cache_dir=cache_dir)
-        return cls(processmetadata, options)
+        return cls(processmetadata, options, include_children=include_children)
 
     def update_struct_defs(self) -> None:
         """
@@ -198,7 +236,6 @@ class BPFCollector:
         directives.
         """
         constants = {
-            "PID": self.pid,
             "STACK_TOP_ADDR": self.metadata.stack_top,
             # TODO: find a way to extract those ?
             "POSTGRES_EPOCH_JDATE": 2451545,
@@ -213,7 +250,10 @@ class BPFCollector:
             "MEMORY_REQUEST_MAXSIZE": MEMORY_REQUEST_MAXSIZE,
             "MEMORY_PATH_SIZE": MEMORY_PATH_SIZE,
         }
-
+        if self.ppid is not None:
+            constants["POSTMASTER_PID"] = self.ppid
+        else:
+            constants["PID"] = self.pid
         return constants
 
     @property
@@ -362,6 +402,12 @@ class BPFCollector:
         if self.background_thread:
             self.background_thread.join()
             self.background_thread = None
+            for pid, fd in self.anon_map_fds.items():  # pylint: disable=invalid-name
+                os.close(fd)
+                try:
+                    del self.bpf["pid_queues"][ct.c_int(pid)]
+                except KeyError:
+                    pass
             self.bpf.cleanup()
 
     # pylint: disable=unused-argument
@@ -437,11 +483,39 @@ class BPFCollector:
             memory_path=memory_path,
         )
 
-    def send_memory_request(self, request: memory_request) -> None:
+    def send_memory_request(self, pid: int, request: memory_request) -> None:
         """
         Sends a memory request to the ebpf program.
         """
-        self.bpf[b"memory_requests"].push(request)
+        try:
+            map_id = self.bpf[b"pid_queues"][ct.c_int(pid)]
+        except KeyError:
+            # If we don't have a map for this process, we can't send memory requests.
+            return
+        map_fd = bcclib.bpf_map_get_fd_by_id(map_id)
+        ret = bcclib.bpf_update_elem(map_fd, 0, ct.byref(request), 0)
+        if ret < 0:
+            raise ValueError("Something went wrong while sending a memory request")
+
+    def preprocess_code(self, buf: str) -> str:
+        """
+        Preprocess code for things macro are not allowed to do with BCC.
+        """
+        if self.include_children:
+            buf = buf.replace(
+                "##CHECK_POSTMASTER##",
+                """{ 
+                u64 ppid; 
+                struct task_struct* task_p = (struct task_struct*)bpf_get_current_task(); 
+                struct task_struct* parent_task_p = task_p->real_parent; 
+                ppid = parent_task_p->tgid; 
+                if (ppid != POSTMASTER_PID) 
+                    return 0; 
+                };""",
+            )
+        else:
+            buf = buf.replace("##CHECK_POSTMASTER##", "")
+        return buf
 
     def prepare_bpf(self) -> BPF:
         """
@@ -456,6 +530,8 @@ class BPFCollector:
         buf += intenum_to_c(self.make_global_variables_enum())
         buf += load_c_file("program.c")
         buf += self._optional_code()
+        # Ok, now workaround some limitations of the macro system with bcc and implement our own.
+        buf = self.preprocess_code(buf)
         # Add the code directory as include dir
         cflags = [f"-I{CODE_BASE_PATH}"]
         # Suppress some common warnings depending on bcc / kernel combinations
@@ -466,6 +542,7 @@ class BPFCollector:
             cflags=cflags,
             debug=0,
             usdt_contexts=[self.usdt_ctx],
+            attach_usdt_ignore_pid=self.include_children,
         )
         return bpf
 
@@ -473,4 +550,37 @@ class BPFCollector:
         """
         Setup the initial BPF State
         """
-        return
+        if self.pid is not None:
+            self.setup_process(self.pid)
+
+    def setup_process(self, pid: int) -> int:
+        """
+        Callback when a new process is created.
+        """
+        if self.options.enable_perf_events:
+            new_map = bcclib.bcc_create_map(
+                BPF_MAP_TYPE_QUEUE, None, 0, ct.sizeof(memory_request), 1024, 0
+            )
+            self.bpf["pid_queues"][ct.c_int(pid)] = ct.c_int(new_map)
+            self.anon_map_fds[pid] = new_map
+        return 0
+
+    def cleanup_process(self, pid: int) -> int:
+        """
+        Callback when a process exits.
+        """
+        # If we instrument a single pid, exit
+        if self.pid == pid:
+            print(f"Process {pid} is terminating, stopping collection")
+            self.stop()
+        else:
+            try:
+                if pid in self.anon_map_fds:
+                    try:
+                        del self.bpf["pid_queues"][ct.c_int(pid)]
+                    except KeyError:
+                        pass
+                    os.close(self.anon_map_fds[pid])
+            except KeyError:
+                return 0
+        return 0

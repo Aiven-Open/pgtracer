@@ -2,18 +2,19 @@
 #include "stack.h"
 #include "uapi/linux/bpf_perf_event.h"
 #include "utils.h"
+#include "data.h"
 
 struct memory_request_t {
 	short event_type;
-    Id128 requestId;
+    Id128 request_id;
 	int path_size;
     u64 size;
 	u64 memory_path[MEMORY_PATH_SIZE];
 };
 
 struct memory_response_t {
-	short event_type;
-    Id128 requestId;
+	event_base event_base;
+    Id128 request_id;
     char payload[MEMORY_REQUEST_MAXSIZE];
 };
 
@@ -30,6 +31,8 @@ struct stack_sample_t {
 BPF_HASH(discovery_enabled, int, bool, 2);
 
 BPF_QUEUE(memory_requests, struct memory_request_t, 1024);
+/* Define one queue per process */
+BPF_HASH_OF_MAPS(pid_queues, int, "memory_requests", 1024);
 
 /*
  * This code is run on perf event, with a specific frequency.
@@ -42,12 +45,15 @@ BPF_QUEUE(memory_requests, struct memory_request_t, 1024);
  */
 int perf_event(struct bpf_perf_event_data *ctx)
 {
+	##CHECK_POSTMASTER##
     struct memory_request_t request;
 	struct memory_response_t *response;
 	u64 size;
 	u64 memory_location;
+	int pid = (bpf_get_current_pid_tgid() >> 32);
 	int i = 0;
 	int j;
+	void * queue;
 #ifdef ENABLE_QUERY_DISCOVERY
 	int key = QUERY_DISCOVERY_KEY;
 	bool *need_discovery;
@@ -72,7 +78,7 @@ int perf_event(struct bpf_perf_event_data *ctx)
 			 */
 			if (stack_sample)
 			{
-				stack_sample->portal_data.event_type = EventTypeStackSample;
+				fill_event_base(&(stack_sample->portal_data.event_base), EventTypeStackSample);
 				if (need_query)
 				{
 					void *queryDesc = 0;
@@ -90,14 +96,18 @@ int perf_event(struct bpf_perf_event_data *ctx)
 		}
 	}
 #endif
+	queue = pid_queues.lookup(&pid);
+	if (!queue)
+		return 0;
 	while (i < 5)
 	{
 
 		/* No more requests to process. */
-		if (memory_requests.pop(&request) < 0)
+		if (bpf_map_pop_elem(queue, &request) < 0)
 		{
 			return 0;
 		}
+
 		size = request.size;
 		/* We treat those specially, as we have the opportunity to gather a bunch of
 		 * data at the same time.
@@ -107,7 +117,7 @@ int perf_event(struct bpf_perf_event_data *ctx)
 			struct planstate_data_t *response = event_ring.ringbuf_reserve(sizeof(struct planstate_data_t));
 			if (!response)
 				return 1;
-			response->event_type = EventTypeMemoryNodeData;
+			fill_event_base(&(response->event_base), EventTypeMemoryNodeData);
 			record_node((void *) request.memory_path[0], response, NULL, false);
 			event_ring.ringbuf_submit(response, 0);
 			i++;
@@ -117,7 +127,7 @@ int perf_event(struct bpf_perf_event_data *ctx)
 		if (!response)
 			return 1;
 
-		response->event_type = request.event_type;
+		fill_event_base(&(response->event_base), request.event_type);
 		if (size >= MEMORY_REQUEST_MAXSIZE)
 			size = MEMORY_REQUEST_MAXSIZE;
 		/*
@@ -146,7 +156,7 @@ int perf_event(struct bpf_perf_event_data *ctx)
 		{
 			event_ring.ringbuf_discard(response, 0);
 		} else {
-			response->requestId = request.requestId;
+			response->request_id = request.request_id;
 			event_ring.ringbuf_submit(response, 0);
 		}
 		i++;

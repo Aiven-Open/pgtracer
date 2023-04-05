@@ -16,7 +16,6 @@
 		: [max]"i"(UMAX)					\
 	)
 
-
 static u64 pgts_to_unixts(u64 pgts)
 {
 	ulong secs = (ulong) pgts / 1000000;
@@ -37,6 +36,12 @@ static inline Id128 get_portal_key(void * portal)
 						OffsetFrom(portal, PortalData, creation_time));
 	ret.u2 = pgts_to_unixts(creation_time);
 	return ret;
+}
+
+static inline void fill_event_base(event_base* event, short event_type)
+{
+	event->event_type = event_type;
+	event->pid = (bpf_get_current_pid_tgid() >> 32);
 }
 
 static inline void fill_portal_data(void * queryDesc, struct portal_data_t* event)
@@ -96,7 +101,6 @@ static inline void fill_portal_data(void * queryDesc, struct portal_data_t* even
 
 static inline void init_portal_data(struct portal_data_t* event)
 {
-	event->event_type = 0;
 	event->query[0] = 0;
 	event->instrument[0] = 0;
 	event->search_path[0] = 0;
