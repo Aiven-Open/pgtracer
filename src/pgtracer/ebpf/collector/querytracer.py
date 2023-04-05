@@ -67,7 +67,7 @@ class QueryTracerEventHandler(EventHandler):
         self.next_request_id = 0
 
     def _process_portal_data(
-        self, bpf_collector: BPFCollector, event: portal_data
+        self, bpf_collector: BPFCollector, event: portal_data, pid: int
     ) -> int:
         """
         Process the portal data. This is used both when a query starts, and when we see
@@ -93,10 +93,12 @@ class QueryTracerEventHandler(EventHandler):
                 structs.QueryDesc,
                 ["planstate", "instrument"],
             )
-            bpf_collector.send_memory_request(request)
+            bpf_collector.send_memory_request(pid, request)
         return 0
 
-    def handle_ExecutorRun(self, bpf_collector: BPFCollector, event: ct._CData) -> int:
+    def handle_ExecutorRun(
+        self, bpf_collector: BPFCollector, event: ct._CData, pid: int
+    ) -> int:
         """
         Handle ExecutorRun event. This event is produced by an uprobe on
         standard_ExecutorRun. See executorstart_enter in program.c.
@@ -108,10 +110,11 @@ class QueryTracerEventHandler(EventHandler):
             bpf_collector.bpf[b"discovery_enabled"][ct.c_int(1)] = ct.c_bool(False)
             bpf_collector.bpf[b"discovery_enabled"][ct.c_int(2)] = ct.c_bool(False)
         event = ct.cast(event, ct.POINTER(portal_data)).contents
-        return self._process_portal_data(bpf_collector, event)
+        return self._process_portal_data(bpf_collector, event, pid)
 
+    # pylint: disable=unused-argument
     def handle_ExecutorFinish(
-        self, bpf_collector: BPFCollector, event: ct._CData
+        self, bpf_collector: BPFCollector, event: ct._CData, pid: int
     ) -> int:
         """
         Handle ExecutorFinish event.
@@ -127,8 +130,9 @@ class QueryTracerEventHandler(EventHandler):
             )
         return 0
 
+    # pylint: disable=unused-argument
     def handle_DropPortalEnter(
-        self, bpf_collector: BPFCollector, event: ct._CData
+        self, bpf_collector: BPFCollector, event: ct._CData, pid: int
     ) -> int:
         """
         Handle DropPortalEnter event. This event is produced by a uprobe on
@@ -151,7 +155,7 @@ class QueryTracerEventHandler(EventHandler):
 
     # pylint: disable=unused-argument
     def handle_DropPortalReturn(
-        self, bpf_collector: BPFCollector, event: ct._CData
+        self, bpf_collector: BPFCollector, event: ct._CData, pid: int
     ) -> int:
         """
         Handle DropPortalReturn event. This event is produced by an uretprobe on
@@ -171,7 +175,7 @@ class QueryTracerEventHandler(EventHandler):
         return 0
 
     def handle_ExecProcNodeFirst(
-        self, bpf_collector: BPFCollector, event: ct._CData
+        self, bpf_collector: BPFCollector, event: ct._CData, pid: int
     ) -> int:
         """
         Handle ExecProcNodeFirst event. This event is produced by a uprobe on
@@ -193,10 +197,12 @@ class QueryTracerEventHandler(EventHandler):
                 bpf_collector.metadata.structs.PlanState,
                 ["instrument"],
             )
-            bpf_collector.send_memory_request(request)
+            bpf_collector.send_memory_request(pid, request)
         return 0
 
-    def handle_ExecEndNode(self, bpf_collector: BPFCollector, event: ct._CData) -> int:
+    def handle_ExecEndNode(
+        self, bpf_collector: BPFCollector, event: ct._CData, pid: int
+    ) -> int:
         """
         Handle ExecEndNode event. This event is produced by a uprobe on
         ExecEndNode's implementations.
@@ -220,7 +226,7 @@ class QueryTracerEventHandler(EventHandler):
         return 0
 
     def handle_KBlockRqIssue(
-        self, bpf_collector: BPFCollector, event: ct._CData
+        self, bpf_collector: BPFCollector, event: ct._CData, pid: int
     ) -> int:
         """
         Handle KBlockRqIssue event. This event is produced by a kernel
@@ -244,18 +250,19 @@ class QueryTracerEventHandler(EventHandler):
         return 0
 
     def handle_MemoryResponseQueryInstr(
-        self, bpf_collector: BPFCollector, event: ct._CData
+        self, bpf_collector: BPFCollector, event: ct._CData, pid: int
     ) -> int:
         """
         Handle MemoryResponseQueryInstr
 
-        We lookup the requestId, and update the given counters if needed.
+        We lookup the request_id, and update the given counters if needed.
         """
         ev = ct.cast(event, ct.POINTER(memory_response)).contents
+
         if not self.current_executor:
             return 0
         # We have a memory response for the whole query
-        query = self.query_cache.get(ev.requestId.as_tuple(), None)
+        query = self.query_cache.get(ev.request_id.as_tuple(), None)
         if query:
             instr = bpf_collector.metadata.structs.Instrumentation(ev.payload_addr)
             query.instrument = instr
@@ -264,17 +271,17 @@ class QueryTracerEventHandler(EventHandler):
             # Re-send the same request for continuous monitoring
             request = bpf_collector.build_memory_request(
                 EventType.MemoryResponseQueryInstr,
-                ev.requestId,
+                ev.request_id,
                 query.addr,
                 bpf_collector.metadata.structs.QueryDesc,
                 ["planstate", "instrument"],
             )
 
-            bpf_collector.send_memory_request(request)
+            bpf_collector.send_memory_request(pid, request)
         return 0
 
     def handle_MemoryResponseNodeInstr(
-        self, bpf_collector: BPFCollector, event: ct._CData
+        self, bpf_collector: BPFCollector, event: ct._CData, pid: int
     ) -> int:
         """
         Handle MemoryResponseNodeInstr produced as a response to some memory_request.
@@ -283,7 +290,7 @@ class QueryTracerEventHandler(EventHandler):
             return 0
         query = self.query_cache.get(self.current_executor, None)
         ev = ct.cast(event, ct.POINTER(memory_response)).contents
-        nodeid = ev.requestId.as_int()
+        nodeid = ev.request_id.as_int()
         # We have a memory response for an individual node
         if query is not None and nodeid is not None:
             node = query.nodes.get(nodeid)
@@ -298,11 +305,11 @@ class QueryTracerEventHandler(EventHandler):
                     bpf_collector.metadata.structs.PlanState,
                     ["instrument"],
                 )
-                bpf_collector.send_memory_request(request)
+                bpf_collector.send_memory_request(pid, request)
         return 0
 
     def handle_MemoryNodeData(
-        self, bpf_collector: BPFCollector, event: ct._CData
+        self, bpf_collector: BPFCollector, event: ct._CData, pid: int
     ) -> int:
         """
         Handle MemoryNodeData produced as a response for a memory_request.
@@ -318,16 +325,18 @@ class QueryTracerEventHandler(EventHandler):
                 leftchild.parent_node = node
                 query.nodes[ev.lefttree] = leftchild
                 node.children[leftchild] = None
-                self._gather_node_info(bpf_collector, ev.lefttree)
+                self._gather_node_info(bpf_collector, ev.lefttree, pid)
             if ev.righttree and ev.righttree not in query.nodes:
                 rightchild = PlanState(ev.righttree)
                 rightchild.parent_node = node
                 query.nodes[ev.righttree] = rightchild
                 node.children[rightchild] = None
-                self._gather_node_info(bpf_collector, ev.righttree)
+                self._gather_node_info(bpf_collector, ev.righttree, pid)
         return 0
 
-    def _gather_node_info(self, bpf_collector: BPFCollector, nodeaddr: int) -> None:
+    def _gather_node_info(
+        self, bpf_collector: BPFCollector, nodeaddr: int, pid: int
+    ) -> None:
         """
         Send memory requests to gather information about a specific node.
         """
@@ -338,16 +347,18 @@ class QueryTracerEventHandler(EventHandler):
             bpf_collector.metadata.structs.PlanState,
             [],
         )
-        bpf_collector.send_memory_request(req)
+        bpf_collector.send_memory_request(pid, req)
 
-    def handle_StackSample(self, bpf_collector: BPFCollector, event: ct._CData) -> int:
+    def handle_StackSample(
+        self, bpf_collector: BPFCollector, event: ct._CData, pid: int
+    ) -> int:
         """
         Handle StackSample events produced during perf sampling.
         """
         ev = ct.cast(event, ct.POINTER(stack_sample)).contents
         _, creation_time = ev.portal_data.portal_key.as_tuple()
         if creation_time:
-            self._process_portal_data(bpf_collector, ev.portal_data)
+            self._process_portal_data(bpf_collector, ev.portal_data, pid)
         bpf_collector.bpf[b"discovery_enabled"][ct.c_int(1)] = ct.c_bool(False)
         if bpf_collector.current_query:
             # Now add the nodes from the stacktrace
@@ -357,11 +368,11 @@ class QueryTracerEventHandler(EventHandler):
             # And add memory_requests to gather their information.
             for node in bpf_collector.current_query.nodes.values():
                 if node.is_stub and node.addr:
-                    self._gather_node_info(bpf_collector, node.addr)
+                    self._gather_node_info(bpf_collector, node.addr, pid)
         return 0
 
     def handle_MemoryAccount(
-        self, bpf_collector: BPFCollector, event: ct._CData
+        self, bpf_collector: BPFCollector, event: ct._CData, pid: int
     ) -> int:
         """
         Handle MemoryAccount events produced by malloc instrumentation.
@@ -384,10 +395,11 @@ class QueryTracerBPFCollector(BPFCollector):
         self,
         metadata: ProcessMetadata,
         options: Optional[QueryTracerOptions] = None,
+        include_children: bool = False,
     ):
         self.options: QueryTracerOptions
         self.event_handler: QueryTracerEventHandler
-        super().__init__(metadata, options)
+        super().__init__(metadata, options, include_children)
 
     def attach_probes(self) -> None:
         super().attach_probes()
@@ -397,11 +409,12 @@ class QueryTracerBPFCollector(BPFCollector):
         self._attach_uprobe("standard_ExecutorRun", "executorrun_enter")
         self._attach_uprobe("ExecutorFinish", "executorfinish_enter")
         self._attach_uprobe("mmap", "mmap_enter")
-        self.bpf.attach_uprobe(name="c", sym="mmap", fn_name="mmap_enter", pid=self.pid)
         self.bpf.attach_uprobe(
-            name="c", sym="munmap", fn_name="munmap_enter", pid=self.pid
+            name="c", sym="mmap", fn_name=b"mmap_enter", pid=self.pid
         )
-        self._attach_uprobe("munmap", "munmap_enter")
+        self.bpf.attach_uprobe(
+            name="c", sym="munmap", fn_name=b"munmap_enter", pid=self.pid
+        )
         if self.options.enable_nodes_collection:
             self._attach_uprobe("ExecProcNodeFirst", "execprocnodefirst_enter")
             for func in self.ExecEndFuncs:
@@ -419,7 +432,8 @@ class QueryTracerBPFCollector(BPFCollector):
         if self.options.instrument_flags:
             constants["USER_INSTRUMENT_FLAGS"] = self.options.instrument_flags
         if self.options.enable_query_discovery:
-            constants["ENABLE_QUERY_DISCOVERY"] = True
+            if not self.ppid:
+                constants["ENABLE_QUERY_DISCOVERY"] = True
         return constants
 
     def _optional_code(self) -> str:

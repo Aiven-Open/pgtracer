@@ -7,6 +7,7 @@ static int override_instrument_options(void * querydesc);
 
 int executorstart_enter(struct pt_regs *ctx)
 {
+	##CHECK_POSTMASTER##
 	void *queryDesc = (void *) PT_REGS_PARM1(ctx);
 #ifdef USER_INSTRUMENT_FLAGS
 	override_instrument_options(queryDesc);
@@ -16,6 +17,8 @@ int executorstart_enter(struct pt_regs *ctx)
 
 int executorrun_enter(struct pt_regs *ctx)
 {
+	u64 ppid; 
+	##CHECK_POSTMASTER##
 	void *queryDesc = (void *) PT_REGS_PARM1(ctx);
 	void *sourceText;
 	void *portaladdr;
@@ -30,7 +33,7 @@ int executorrun_enter(struct pt_regs *ctx)
 	event = event_ring.ringbuf_reserve(sizeof(struct portal_data_t));
 	if (!event)
 		return 1;
-	event->event_type = EventTypeExecutorRun;
+	fill_event_base(&(event->event_base), EventTypeExecutorRun);
 	event->portal_key = key;
 	fill_portal_data(queryDesc, event);
 	bpf_probe_read_user(&search_path, sizeof(void *), (void *) GlobalVariablesnamespace_search_path);
@@ -42,6 +45,7 @@ int executorrun_enter(struct pt_regs *ctx)
 
 int executorfinish_enter(struct pt_regs *ctx)
 {
+	##CHECK_POSTMASTER##
 	void *portal;
 	void *queryDesc = (void *) PT_REGS_PARM1(ctx);
 	struct portal_data_t *event;
@@ -56,7 +60,7 @@ int executorfinish_enter(struct pt_regs *ctx)
 		return 1;
 	init_portal_data(event);
 	fill_portal_data(queryDesc, event);
-	event->event_type = EventTypeExecutorFinish;
+	fill_event_base(&(event->event_base), EventTypeExecutorFinish);
 	event->portal_key = key;
 	event_ring.ringbuf_submit(event, 0);
 	return 0;
@@ -64,13 +68,14 @@ int executorfinish_enter(struct pt_regs *ctx)
 
 int portaldrop_return(struct pt_regs *ctx)
 {
+	##CHECK_POSTMASTER##
 	struct portal_data_t *event;
 	Id128 key = {0};
 	event = event_ring.ringbuf_reserve(sizeof(struct portal_data_t));
 	if (!event)
 		return 1;
 	init_portal_data(event);
-	event->event_type = EventTypeDropPortalReturn;
+	fill_event_base(&(event->event_base), EventTypeDropPortalReturn);
 	event->portal_key = key;
 	event_ring.ringbuf_submit(event, 0);
 	return 0;
@@ -78,6 +83,7 @@ int portaldrop_return(struct pt_regs *ctx)
 
 int portaldrop_enter(struct pt_regs *ctx)
 {
+	##CHECK_POSTMASTER##
 	void *portal =  (void *) PT_REGS_PARM1(ctx);
 	Id128 key = get_portal_key(portal);
 	struct portal_data_t *event;
@@ -89,11 +95,48 @@ int portaldrop_enter(struct pt_regs *ctx)
 	bpf_probe_read_user(&queryDesc, sizeof(void *),
 						OffsetFrom(portal, PortalData, queryDesc));
 	fill_portal_data(queryDesc, event);
-	event->event_type = EventTypeDropPortalEnter;
+	fill_event_base(&(event->event_base), EventTypeDropPortalEnter);
 	event->portal_key = key;
 	event_ring.ringbuf_submit(event, 0);
 	return 0;
 }
+
+/* When instrumenting a whole cluster, we also trace new processes.
+ * Additionally, specific collectors can embed code in here.
+ */
+#ifdef POSTMASTER_PID
+TRACEPOINT_PROBE(sched, sched_process_fork)
+{
+	u32 pid = args->parent_pid;
+	if (args->parent_pid != POSTMASTER_PID)
+		return 0;
+	struct event_base *event;
+	event = event_ring.ringbuf_reserve(sizeof (struct event_base));
+	if (!event)
+		return 1;
+	event->pid = args->child_pid;
+	event->event_type = EventTypeProcessFork;
+	event_ring.ringbuf_submit(event, 0);
+	return 0;
+}
+#endif
+
+TRACEPOINT_PROBE(sched, sched_process_exit)
+{
+	##CHECK_POSTMASTER##
+#ifdef PID
+	if (bpf_get_current_pid_tgid() >> 32 != PID)
+		return 1;
+#endif
+	struct event_base *event;
+	event = event_ring.ringbuf_reserve(sizeof (struct event_base));
+	if (!event)
+		return 1;
+	fill_event_base(event, EventTypeProcessExit);
+	event_ring.ringbuf_submit(event, 0);
+	return 0;
+}
+
 
 #ifdef USER_INSTRUMENT_FLAGS
 static int override_instrument_options(void * querydesc)

@@ -2,6 +2,10 @@
 #define DATA_H
 #include "stack.h"
 
+typedef struct event_base {
+	short event_type;
+	int pid;
+} event_base;
 
 typedef struct Id128 {
 	u64 u1;
@@ -9,7 +13,7 @@ typedef struct Id128 {
 } Id128;
 
 struct portal_data_t {
-	short event_type;
+	event_base event_base;
 	Id128 portal_key;
 	u64 queryAddr;
 	u64 query_id;
@@ -32,7 +36,7 @@ struct plan_data_t {
 };
 
 struct planstate_data_t {
-	short event_type;
+	event_base event_base;
 	Id128 portal_key;
 	u64 planstate_addr;
 	int planstate_tag;

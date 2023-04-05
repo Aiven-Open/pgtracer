@@ -13,6 +13,7 @@ from elftools.elf.elffile import ELFFile
 from ...utils import readcstr
 from ..dwarf import ProcessMetadata, Struct
 from . import BPFCollector, CollectorOptions, EventHandler
+from .c_defs import event_base
 from .utils import load_c_file
 
 GUC_MAX_LENGTH = 128
@@ -38,7 +39,7 @@ class guc_response(ct.Structure):
     """
 
     _fields_ = [
-        ("event_type", ct.c_short),
+        ("event", event_base),
         ("guc_location", ct.c_ulonglong),
         ("status", ct.c_bool),
     ]
@@ -64,7 +65,7 @@ class GUCTracerEventHandler(EventHandler):
 
     # pylint: disable=invalid-name
     def handle_GUCResponse(
-        self, bpf_collector: GUCTracerBPFCollector, event: ct._CData
+        self, bpf_collector: GUCTracerBPFCollector, event: ct._CData, pid: int
     ) -> int:
         """
         Handle GUCResponse messages.
@@ -110,8 +111,15 @@ class GUCTracerBPFCollector(BPFCollector):
     }
 
     def __init__(
-        self, metadata: ProcessMetadata, options: Optional[CollectorOptions] = None
+        self,
+        metadata: ProcessMetadata,
+        options: Optional[CollectorOptions] = None,
+        include_children: bool = False,
     ):
+        if include_children:
+            raise NotImplementedError(
+                "GUC Tracer does not support attaching to the whole cluster."
+            )
         self.options: CollectorOptions
         self.guc_defs: Dict[str, GUCDefinition] = {}
         self.pending_guc_sets: Dict[int, Tuple[GUCDefinition, Any]] = {}
