@@ -5,6 +5,12 @@
 #define Offset(structname, member) (STRUCT_ ## structname ## _OFFSET_ ## member)
 #define OffsetFrom(pointer, structname, member) ((void *) (pointer + Offset(structname, member)))
 
+/* Reuse code from LIBCC for version matching */
+#define __LIBBCC_VERSION(a, b, c) (((a) << 16) + ((b) << 8) + ((c) > 255 ? 255 : (c)))
+#define LIBBCC_VERSION_CODE __LIBBCC_VERSION(LIBBCC_MAJOR_VERSION, LIBBCC_MINOR_VERSION, LIBBCC_PATCH_VERSION)
+#define LIBBCC_VERSION_GEQ(a,b,c) LIBBCC_VERSION_CODE >= __LIBBCC_VERSION(a, b, c)
+
+
 #include "data.h"
 
 /* Clamp a value to a max value, and make the eBPF verifier happy. */
