@@ -186,7 +186,7 @@ def test_long_query(querytracer_instrumented, connection):
     def event_handler_observer(method_name):
         original_method = getattr(QueryTracerEventHandler, method_name)
 
-        def observe_event_handler(event_handler, bpf_collector, event):
+        def observe_event_handler(event_handler, bpf_collector, event, pid):
             events[method_name] += 1
             return original_method(event_handler, bpf_collector, event, pid)
 
@@ -227,9 +227,9 @@ def test_query_discovery(querytracer_factory, connection):
     def event_handler_observer(method_name):
         original_method = getattr(QueryTracerEventHandler, method_name)
 
-        def observe_event_handler(event_handler, bpf_collector, event):
+        def observe_event_handler(event_handler, bpf_collector, event, pid):
             events[method_name] += 1
-            return original_method(event_handler, bpf_collector, event)
+            return original_method(event_handler, bpf_collector, event, pid)
 
         return observe_event_handler
 
