@@ -32,7 +32,11 @@ BPF_HASH(discovery_enabled, int, bool, 2);
 
 BPF_QUEUE(memory_requests, struct memory_request_t, 1024);
 /* Define one queue per process */
+#if LIBBCC_VERSION_GEQ(0, 21, 0)
 BPF_HASH_OF_MAPS(pid_queues, int, "memory_requests", 1024);
+#else
+BPF_HASH_OF_MAPS(pid_queues, "memory_requests", 1024);
+#endif
 
 /*
  * This code is run on perf event, with a specific frequency.

@@ -256,6 +256,9 @@ class BPFCollector:
             "EVENTRING_PAGE_SIZE": 1024,
             "MEMORY_REQUEST_MAXSIZE": MEMORY_REQUEST_MAXSIZE,
             "MEMORY_PATH_SIZE": MEMORY_PATH_SIZE,
+            "LIBBCC_MAJOR_VERSION": BCC_VERSION_TUPLE[0],
+            "LIBBCC_MINOR_VERSION": BCC_VERSION_TUPLE[1],
+            "LIBBCC_PATCH_VERSION": BCC_VERSION_TUPLE[2],
         }
         if self.ppid is not None:
             constants["POSTMASTER_PID"] = self.ppid
@@ -548,7 +551,7 @@ class BPFCollector:
         kwargs: Dict[str, Any] = {}
         if self.include_children and BCC_VERSION_TUPLE >= (0, 19, 0):
             kwargs["attach_usdt_ignore_pid"] = True
-            kwargs["usdt_contexts"] = self.usdt_ctx
+            kwargs["usdt_contexts"] = [self.usdt_ctx]
         bpf = BPF(text=buf.encode("utf8"), cflags=cflags, debug=0, **kwargs)
         return bpf
 
