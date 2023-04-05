@@ -550,7 +550,7 @@ class BPFCollector:
         """
         Setup the initial BPF State
         """
-        if self.pid is not None:
+        if self.pid > 0:
             self.setup_process(self.pid)
 
     def setup_process(self, pid: int) -> int:
