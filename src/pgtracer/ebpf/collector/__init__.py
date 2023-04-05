@@ -18,6 +18,7 @@ from time import sleep
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, TypeVar, Union
 
 from bcc import BPF, USDT, PerfSWConfig, PerfType
+from bcc import __version__ as bcc_version
 from bcc import lib as bcclib
 from pypsutil import Process
 
@@ -26,6 +27,8 @@ from ..dwarf import DWARFPointer, ProcessMetadata, Struct, get_size
 from ..unwind import stack_data_t
 from .c_defs import *
 from .utils import CODE_BASE_PATH, defines_dict_to_c, intenum_to_c, load_c_file
+
+BCC_VERSION_TUPLE = tuple(int(part) for part in bcc_version.split("."))
 
 
 class InvalidStateException(Exception):
@@ -176,11 +179,15 @@ class BPFCollector:
             self.pid = metadata.pid
             self.ppid = None
 
-        self.usdt_ctx = USDT(metadata.pid)
         self.metadata = metadata
         self.program = str(self.metadata.program).encode("utf8")
-        self.enable_usdt_probes(self.usdt_ctx)
-
+        # Old bcc version don't support global usdt probes, so disable
+        # memory tracking in that case
+        if self.include_children is False or BCC_VERSION_TUPLE >= (0, 19, 0):
+            self.usdt_ctx = USDT(metadata.pid)
+            self.enable_usdt_probes(self.usdt_ctx)
+        else:
+            self.usdt_ctx = None
         self.bpf = self.prepare_bpf()
         self.setup_bpf_state()
         self.event_handler: EventHandler = self.event_handler_cls()
@@ -537,13 +544,12 @@ class BPFCollector:
         # Suppress some common warnings depending on bcc / kernel combinations
         cflags.append("-Wno-macro-redefined")
         cflags.append("-Wno-ignored-attributes")
-        bpf = BPF(
-            text=buf.encode("utf8"),
-            cflags=cflags,
-            debug=0,
-            usdt_contexts=[self.usdt_ctx],
-            attach_usdt_ignore_pid=self.include_children,
-        )
+        # Only enable global memory probe if bcc version is recent enough
+        kwargs: Dict[str, Any] = {}
+        if self.include_children and BCC_VERSION_TUPLE >= (0, 19, 0):
+            kwargs["attach_usdt_ignore_pid"] = True
+            kwargs["usdt_contexts"] = self.usdt_ctx
+        bpf = BPF(text=buf.encode("utf8"), cflags=cflags, debug=0, **kwargs)
         return bpf
 
     def setup_bpf_state(self) -> None:
