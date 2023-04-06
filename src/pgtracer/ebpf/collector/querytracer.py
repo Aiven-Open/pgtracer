@@ -410,10 +410,10 @@ class QueryTracerBPFCollector(BPFCollector):
         self._attach_uprobe("ExecutorFinish", "executorfinish_enter")
         self._attach_uprobe("mmap", "mmap_enter")
         self.bpf.attach_uprobe(
-            name="c", sym="mmap", fn_name=b"mmap_enter", pid=self.pid
+            name=b"c", sym=b"mmap", fn_name=b"mmap_enter", pid=self.pid
         )
         self.bpf.attach_uprobe(
-            name="c", sym="munmap", fn_name=b"munmap_enter", pid=self.pid
+            name=b"c", sym=b"munmap", fn_name=b"munmap_enter", pid=self.pid
         )
         if self.options.enable_nodes_collection:
             self._attach_uprobe("ExecProcNodeFirst", "execprocnodefirst_enter")
