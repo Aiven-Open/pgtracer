@@ -212,7 +212,9 @@ class BPFCollector:
         # Check if we are given the postmaster pid, or a backend.
         # If our parent is itself a postgres process, then we are instrumenting the whole backend.
         pprocess = process.parent()
-        include_children = bool(pprocess and not pprocess.name() == "postgres")
+        include_children = bool(
+            pprocess and pprocess.name() not in ("postgres", "postmaster")
+        )
         processmetadata = ProcessMetadata(process, cache_dir=cache_dir)
         return cls(processmetadata, options, include_children=include_children)
 
