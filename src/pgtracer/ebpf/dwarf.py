@@ -861,7 +861,11 @@ class ProcessMetadata:
         """
         if self.gdb_index is None:
             return self._naive_die_search(tag, name)
-        return self._gdbindex_die_search(tag, name)
+        dies = list(self._gdbindex_die_search(tag, name))
+        if not dies:
+            # If we didn't find it using the gdbindex, fallback to the naive one.
+            return self._naive_die_search(tag, name)
+        return (die for die in dies)
 
     def _die_by_offsets(self, offsets: Tuple[int, int]) -> DIE:
         try:
