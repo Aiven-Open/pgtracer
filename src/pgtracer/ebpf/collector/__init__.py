@@ -415,7 +415,7 @@ class BPFCollector:
             for pid, fd in self.anon_map_fds.items():  # pylint: disable=invalid-name
                 os.close(fd)
                 try:
-                    del self.bpf["pid_queues"][ct.c_int(pid)]
+                    del self.bpf[b"pid_queues"][ct.c_int(pid)]
                 except KeyError:
                     pass
             self.bpf.cleanup()
@@ -570,7 +570,7 @@ class BPFCollector:
             new_map = bcclib.bcc_create_map(
                 BPF_MAP_TYPE_QUEUE, None, 0, ct.sizeof(memory_request), 1024, 0
             )
-            self.bpf["pid_queues"][ct.c_int(pid)] = ct.c_int(new_map)
+            self.bpf[b"pid_queues"][ct.c_int(pid)] = ct.c_int(new_map)
             self.anon_map_fds[pid] = new_map
         return 0
 
@@ -586,7 +586,7 @@ class BPFCollector:
             try:
                 if pid in self.anon_map_fds:
                     try:
-                        del self.bpf["pid_queues"][ct.c_int(pid)]
+                        del self.bpf[b"pid_queues"][ct.c_int(pid)]
                     except KeyError:
                         pass
                     os.close(self.anon_map_fds[pid])
