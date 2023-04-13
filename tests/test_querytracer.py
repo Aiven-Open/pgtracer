@@ -45,7 +45,7 @@ def test_basic_ebf_collector(querytracer, connection):
     assert query.text == "SELECT now()"
     assert query.search_path == '"$user", public'
     assert query.start_datetime.replace(microsecond=0) == querystart
-    assert query.runtime == timedelta(0)
+    assert query.runtime is None
     assert query.instrument.need_timer.value is False
     assert query.instrument.need_bufusage.value is False
     assert query.shared_buffers_hitratio is None
