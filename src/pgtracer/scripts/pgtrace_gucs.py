@@ -40,11 +40,12 @@ def main() -> None:
     seen = set()
     for gucname, gucvalue in set_gucs.items():
         collector.set_guc(gucname, gucvalue)
-    while True:
+    while collector.is_running:
         with collector.lock:
             for guc in collector.guc_defs.values():
                 if guc.guc_name is not None:
                     seen.add(guc.guc_name)
+    collector.stop()
 
 
 if __name__ == "__main__":

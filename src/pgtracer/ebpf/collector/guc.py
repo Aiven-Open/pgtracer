@@ -191,7 +191,7 @@ class GUCTracerBPFCollector(BPFCollector):
         with open(self.metadata.program, "rb") as programbin:
             for typname, variable_name in self.GUC_TABLE_TYPE_TO_VARIABLE.items():
                 deftype = getattr(self.metadata.structs, typname)
-                typsize = deftype.size()
+                typsize = deftype.size
                 variable_addr = self.metadata.global_variable(variable_name)
                 if variable_addr is None:
                     raise ValueError(

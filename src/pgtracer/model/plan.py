@@ -11,8 +11,8 @@ from ..utils import timespec_to_float
 if TYPE_CHECKING:
     from enum import IntEnum
 
-    from ..ebpf.collector import plan_data, planstate_data
-    from ..ebpf.dwarf import ProcessMetadata, Struct
+from ..ebpf.collector.c_defs import plan_data, planstate_data
+from ..ebpf.dwarf import ProcessMetadata, Struct
 
 
 def explain_dict_to_str(parts: Dict[str, str]) -> str:
@@ -45,7 +45,8 @@ class PlanState:
         tag = metadata.enums.NodeTag(event.plan_data.plan_tag)  # type: ignore
         self.tag = tag
         self.instrument = metadata.structs.Instrumentation(instrument_addr)
-        self.plan_data = event.plan_data
+        self.plan_data = plan_data()
+        ct.pointer(self.plan_data)[0] = event.plan_data
 
     @property
     def title(self) -> str:

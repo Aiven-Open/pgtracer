@@ -164,7 +164,7 @@ def get_size(
     Returns the size of a type.
     """
     if issubclass(to_size, Struct):
-        return to_size.size()
+        return to_size.size
     if issubclass(to_size, DWARFPointer):
         if dereference:
             return get_size(to_size.pointed_type)
@@ -496,12 +496,15 @@ class Struct:
     fields_defs: Dict[str, StructMemberDefinition]
     metadata: ProcessMetadata
     die: DIE
+    buffer_type: Type
     _fully_loaded: bool = False
+    size: int
 
     def __init__(self, buffer_addr: int):
-        self.buffer_addr = buffer_addr
+        self.buffer = self.buffer_type()
+        self.buffer_addr = ct.addressof(self.buffer)
+        ct.memmove(self.buffer_addr, buffer_addr, self.size)
         self.members: Dict[str, Union[_CData, Struct]] = {}
-        self.as_dict(include_all=True)
 
     def __init_subclass__(cls) -> None:
         super().__init_subclass__()
@@ -558,6 +561,8 @@ class Struct:
 
     @classmethod
     def _load_fields(cls, filter_fn: Optional[Callable[[DIE], bool]] = None) -> None:
+        if cls._fully_loaded:
+            return
         for child in cls.die.iter_children():
             if filter_fn is None or filter_fn(child):
                 attrname = die_name(child)
@@ -590,6 +595,7 @@ class Struct:
         if cls._fully_loaded:
             return
         cls._load_fields()
+        cls._fully_loaded = True
 
     def __getattr__(self, attrname: str) -> Any:
         """
@@ -624,6 +630,8 @@ class Struct:
         for attrname in self.fields_defs:
             value = getattr(self, attrname)
             values[attrname] = value
+            if include_all and isinstance(value, Struct):
+                value.as_dict(include_all=True)
         return values
 
     @classmethod
@@ -671,7 +679,17 @@ class Structs:
                 and die.attributes["DW_AT_declaration"]
             ):
                 continue
-            cls = type(attrname, (Struct,), {"metadata": self.metadata, "die": die})
+            size = die.attributes["DW_AT_byte_size"].value
+            cls = type(
+                attrname,
+                (Struct,),
+                {
+                    "metadata": self.metadata,
+                    "die": die,
+                    "buffer_type": ct.c_byte * size,
+                    "size": size,
+                },
+            )
             self.cache[attrname] = cls
             return cls
         raise ValueError(f"Could not find type for {attrname}")
