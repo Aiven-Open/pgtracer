@@ -5,8 +5,9 @@ This simple script trace queries executed by a Postgres backend.
 import argparse
 import sys
 import time
+from collections import defaultdict
 from datetime import timedelta
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from pgtracer.ebpf.collector.querytracer import (
     InstrumentationFlags,
@@ -151,28 +152,31 @@ def main() -> None:
     collector = QueryTracerBPFCollector.from_pid(pid, options)
     collector.start()
     total_queries = 0
-    last_running_query = None
+    last_running_query: Dict[int, Optional[Query]] = defaultdict(lambda: None)
     lines_to_clear = 0
     while True:
         try:
             time.sleep(1)
-            if not collector.event_handler.query_history and collector.current_query:
-                first_time = last_running_query is not collector.current_query
-                if first_time:
-                    lines_to_clear = 0
-                lines_to_clear = print_running_query(
-                    collector.current_query,
-                    options.enable_nodes_collection,
-                    last_running_query is not collector.current_query,
-                    lines_to_clear,
-                )
-                last_running_query = collector.current_query
-                continue
-            last_running_query = None
-            for query in collector.event_handler.query_history:
-                print_query(query, options)
-            total_queries += len(collector.event_handler.query_history)
-            collector.event_handler.query_history = []
+            for pid, process_info in collector.event_handler.per_process_info.items():
+                if not process_info.query_history and process_info.current_query:
+                    first_time = (
+                        last_running_query[pid] is not process_info.current_query
+                    )
+                    if first_time:
+                        lines_to_clear = 0
+                    lines_to_clear = print_running_query(
+                        process_info.current_query,
+                        options.enable_nodes_collection,
+                        first_time,
+                        lines_to_clear,
+                    )
+                    last_running_query[pid] = process_info.current_query
+                    continue
+                last_running_query[pid] = None
+                for query in process_info.query_history:
+                    print_query(query, options)
+                total_queries += len(process_info.query_history)
+                process_info.query_history = []
         except KeyboardInterrupt:
             collector.stop()
             sys.exit(0)

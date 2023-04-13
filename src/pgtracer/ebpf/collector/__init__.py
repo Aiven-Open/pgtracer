@@ -193,7 +193,6 @@ class BPFCollector:
         self.event_handler: EventHandler = self.event_handler_cls()
         self.update_struct_defs()
         self.is_running = False
-        self.current_query: Optional[Query] = None
         self.background_thread: Optional[Thread] = None
         self.lock = Lock()
         self.sample_freq = options.sample_freq
