@@ -154,7 +154,7 @@ def main() -> None:
     total_queries = 0
     last_running_query: Dict[int, Optional[Query]] = defaultdict(lambda: None)
     lines_to_clear = 0
-    while True:
+    while collector.is_running:
         try:
             time.sleep(1)
             for pid, process_info in collector.event_handler.per_process_info.items():
@@ -180,6 +180,7 @@ def main() -> None:
         except KeyboardInterrupt:
             collector.stop()
             sys.exit(0)
+    collector.stop()
 
 
 if __name__ == "__main__":
