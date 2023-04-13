@@ -167,10 +167,8 @@ static inline void record_node(void * nodeaddr, struct planstate_data_t *node,
 						sizeof(void *),
 						OffsetFrom(nodeaddr, PlanState, instrument));
 	if (instrument)
-	{
 		bpf_probe_read_user(&node->instrument,
 							STRUCT_SIZE_Instrumentation,
 							instrument);
-	}
 }
 #endif

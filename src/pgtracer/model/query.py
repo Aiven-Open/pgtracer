@@ -172,7 +172,7 @@ class Query:
         """
         Returns the query's top-node total runtime.
         """
-        if self.instrument:
+        if self.instrument and self.instrument.need_timer.value:
             return timespec_to_timedelta(self.instrument.counter)
         return None
 

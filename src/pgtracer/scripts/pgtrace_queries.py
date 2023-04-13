@@ -16,6 +16,7 @@ from pgtracer.ebpf.collector.querytracer import (
 )
 from pgtracer.ebpf.dwarf import Struct
 from pgtracer.model.query import Query
+from pgtracer.utils import timespec_to_timedelta
 
 
 def dump_dict(somedict: Dict[str, Any], indent: int = 0) -> str:
@@ -28,10 +29,11 @@ def dump_dict(somedict: Dict[str, Any], indent: int = 0) -> str:
         if isinstance(value, Struct):
             # Special case for timespec
             if value.__class__.__name__ == "timespec":
-                value = timedelta(
-                    seconds=value.tv_sec.value,
-                    microseconds=value.tv_nsec.value / 1000,
-                )
+                try:
+                    value = timespec_to_timedelta(value)
+                except OverflowError:
+                    # Ignore overflowing timespecs
+                    continue
             else:
                 value = value.as_dict(include_all=True)
         if isinstance(value, dict):
@@ -61,7 +63,7 @@ def print_query(query: Query, options: QueryTracerOptions) -> None:
     mapping["total_cost"] = str(query.total_cost)
     mapping["plan_rows"] = str(query.plan_rows)
     mapping["peak_mem_alloc"] = str(query.memallocs.current_mem_peak)
-    if options.instrument_flags & InstrumentationFlags.TIMER:
+    if query.instrument.need_timer:
         mapping["runtime"] = str(query.runtime)
     if options.instrument_flags & InstrumentationFlags.BUFFERS:
         mapping["written_bytes_to_disk"] = str(query.io_counters["W"])
@@ -157,7 +159,10 @@ def main() -> None:
     while collector.is_running:
         try:
             time.sleep(1)
-            for pid, process_info in collector.event_handler.per_process_info.items():
+            for (
+                pid,
+                process_info,
+            ) in collector.event_handler.per_process_info.copy().items():
                 if not process_info.query_history and process_info.current_query:
                     first_time = (
                         last_running_query[pid] is not process_info.current_query
@@ -178,9 +183,12 @@ def main() -> None:
                 total_queries += len(process_info.query_history)
                 process_info.query_history = []
         except KeyboardInterrupt:
-            collector.stop()
-            sys.exit(0)
+            break
     collector.stop()
+    total_processes = len(collector.event_handler.process_history) + len(
+        collector.event_handler.per_process_info
+    )
+    print(f"Processed {total_queries} queries among {total_processes} processes")
 
 
 if __name__ == "__main__":
