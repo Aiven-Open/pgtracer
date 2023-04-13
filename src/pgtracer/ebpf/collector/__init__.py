@@ -413,12 +413,16 @@ class BPFCollector:
         if self.background_thread:
             self.background_thread.join()
             self.background_thread = None
-            for pid, fd in self.anon_map_fds.items():  # pylint: disable=invalid-name
+            for (
+                pid,
+                fd,
+            ) in self.anon_map_fds.copy().items():  # pylint: disable=invalid-name
                 os.close(fd)
                 try:
                     del self.bpf[b"pid_queues"][ct.c_int(pid)]
                 except KeyError:
                     pass
+            self.anon_map_fds.clear()
             self.bpf.cleanup()
 
     # pylint: disable=unused-argument
@@ -498,13 +502,10 @@ class BPFCollector:
         """
         Sends a memory request to the ebpf program.
         """
-        try:
-            map_id = self.bpf[b"pid_queues"][ct.c_int(pid)]
-        except KeyError:
-            # If we don't have a map for this process, we can't send memory requests.
-            return
-        map_fd = bcclib.bpf_map_get_fd_by_id(map_id)
-        ret = bcclib.bpf_update_elem(map_fd, 0, ct.byref(request), 0)
+        ret = -1
+        if pid in self.anon_map_fds:
+            map_fd = self.anon_map_fds[pid]
+            ret = bcclib.bpf_update_elem(ct.c_int(map_fd), 0, ct.byref(request), 0)
         if ret < 0:
             raise ValueError("Something went wrong while sending a memory request")
 
@@ -591,6 +592,7 @@ class BPFCollector:
                     except KeyError:
                         pass
                     os.close(self.anon_map_fds[pid])
+                    del self.anon_map_fds[pid]
             except KeyError:
                 return 0
         return 0

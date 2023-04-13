@@ -107,8 +107,6 @@ class QueryTracerEventHandler(EventHandler):
         # If perf events are enabled, start watching the query instrumentation.
         if bpf_collector.options.enable_perf_events:
             structs = bpf_collector.metadata.structs
-            # FIXME: this should go to a helper method, taking the
-            # full path in C notation
             request = bpf_collector.build_memory_request(
                 EventType.MemoryResponseQueryInstr,
                 event.portal_key,
