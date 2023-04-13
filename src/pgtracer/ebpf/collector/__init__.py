@@ -225,7 +225,7 @@ class BPFCollector:
         so we build the class dynamically after the DWARF file has been loaded.
         """
         global instrument_type  # pylint: disable=global-statement
-        instrument_type = ct.c_byte * self.metadata.structs.Instrumentation.size()
+        instrument_type = ct.c_byte * self.metadata.structs.Instrumentation.size
         # Update global struct definitions with actual sizes
         portal_data.update_fields(
             {
@@ -333,7 +333,7 @@ class BPFCollector:
         mapping = {}
 
         for key in ("Instrumentation",):
-            mapping[f"STRUCT_SIZE_{key}"] = getattr(self.metadata.structs, key).size()
+            mapping[f"STRUCT_SIZE_{key}"] = getattr(self.metadata.structs, key).size
 
         return mapping
 

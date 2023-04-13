@@ -60,7 +60,7 @@ class TestProcessMetadata(TestCase):
 
         StructA = structs.StructA  # pylint: disable=invalid-name
         self.assertTrue(issubclass(StructA, Struct))
-        self.assertEqual(StructA.size(), 16)
+        self.assertEqual(StructA.size, 16)
 
         a_int = StructA.field_definition("a_int")
         self.assertIsInstance(a_int, StructMemberDefinition)
@@ -83,12 +83,12 @@ class TestProcessMetadata(TestCase):
         self.assertEqual(b_structa.member_type, StructA)
 
         b_structap = StructB.field_definition("b_structap")
-        self.assertEqual(b_structap.offset, StructA.size())
+        self.assertEqual(b_structap.offset, StructA.size)
         self.assertTrue(issubclass(b_structap.member_type, DWARFPointer))
         self.assertEqual(b_structap.member_type.pointed_type, StructA)
 
         b_structbp = StructB.field_definition("b_structbp")
-        self.assertEqual(b_structbp.offset, StructA.size() + 8)
+        self.assertEqual(b_structbp.offset, StructA.size + 8)
         self.assertTrue(issubclass(b_structbp.member_type, DWARFPointer))
         self.assertEqual(b_structbp.member_type.pointed_type, StructB)
 
