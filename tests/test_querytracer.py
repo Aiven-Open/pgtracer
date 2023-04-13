@@ -24,7 +24,8 @@ def wait_for_collector(collector):
     Wait for the collector to have at least one query.
     """
     tries = 0
-    while len(collector.event_handler.query_history) == 0 and tries < 1000:
+    process_info = collector.event_handler.per_process_info[collector.pid]
+    while len(process_info.query_history) == 0 and tries < 1000:
         tries += 1
         sleep(0.05)
 
@@ -37,8 +38,10 @@ def test_basic_ebf_collector(querytracer, connection):
     with connection.execute("SELECT now()") as cur:
         querystart = cur.fetchall()[0][0].replace(microsecond=0, tzinfo=None)
     wait_for_collector(querytracer)
-    assert len(querytracer.event_handler.query_history) == 1
-    query = querytracer.event_handler.query_history[0]
+    assert len(querytracer.event_handler.per_process_info) == 1
+    process_info = querytracer.event_handler.per_process_info[querytracer.pid]
+    assert len(process_info.query_history) == 1
+    query = process_info.query_history[0]
     assert query.text == "SELECT now()"
     assert query.search_path == '"$user", public'
     assert query.start_datetime.replace(microsecond=0) == querystart
@@ -61,9 +64,13 @@ def test_instrumentation(querytracer_instrumented, connection):
     with connection.execute("SELECT * FROM pg_attribute") as cur:
         cur.fetchall()
     wait_for_collector(querytracer_instrumented)
+    assert len(querytracer_instrumented.event_handler.per_process_info) == 1
+    process_info = querytracer_instrumented.event_handler.per_process_info[
+        querytracer_instrumented.pid
+    ]
 
-    assert len(querytracer_instrumented.event_handler.query_history) == 1
-    query = querytracer_instrumented.event_handler.query_history[0]
+    assert len(process_info.query_history) == 1
+    query = process_info.query_history[0]
     assert query.instrument.need_timer.value is True
     assert query.instrument.need_bufusage.value is True
     assert query.runtime > timedelta(0)
@@ -89,12 +96,12 @@ def test_instrumentation(querytracer_instrumented, connection):
     assert query.syscache_hitratio is None
 
     # Generate some temp files for fun
-    querytracer_instrumented.event_handler.query_history = []
+    process_info.query_history = []
     connection.execute("SET work_mem = '64kB'")
     with connection.execute("SELECT * FROM generate_series(1, 10000) as t"):
         pass
     wait_for_collector(querytracer_instrumented)
-    query = querytracer_instrumented.event_handler.query_history[0]
+    query = process_info.query_history[0]
     assert query.text == "SELECT * FROM generate_series(1, 10000) as t"
     assert query.instrument.bufusage.temp_blks_read.value > 0
     assert query.instrument.bufusage.temp_blks_written.value > 0
@@ -104,11 +111,11 @@ def test_instrumentation(querytracer_instrumented, connection):
 
     # Now do the same query with a big enough work_mem to trigger some memory allocations
     connection.execute("SET work_mem = '32MB'")
-    querytracer_instrumented.event_handler.query_history = []
+    process_info.query_history = []
     with connection.execute("SELECT * FROM generate_series(1, 10000) as t") as cur:
         pass
     wait_for_collector(querytracer_instrumented)
-    query = querytracer_instrumented.event_handler.query_history[0]
+    query = process_info.query_history[0]
     # The reparatition between sbrk / mmap and wether we move sbrk back to it's initial
     # value depends on the state of malloc and it's configuration. So best thing we can test is that "something"
     # happened
@@ -126,7 +133,10 @@ def test_plans(querytracer_instrumented, connection):
     ) as cur:
         cur.fetchall()
     wait_for_collector(querytracer_instrumented)
-    query = querytracer_instrumented.event_handler.query_history[0]
+    process_info = querytracer_instrumented.event_handler.per_process_info[
+        querytracer_instrumented.pid
+    ]
+    query = process_info.query_history[0]
     root_node = query.root_node
     NodeTag = querytracer_instrumented.metadata.enums.NodeTag
     assert root_node.tag == NodeTag.T_Limit
@@ -165,7 +175,9 @@ def test_explain(querytracer, connection):
     ) as cur:
         cur.fetchall()
     wait_for_collector(querytracer)
-    query = querytracer.event_handler.query_history[0]
+    assert len(querytracer.event_handler.per_process_info) == 1
+    process_info = querytracer.event_handler.per_process_info[querytracer.pid]
+    query = process_info.query_history[0]
     root_node = query.root_node
     assert re.match(wanted_plan, root_node.explain())
 
@@ -251,6 +263,7 @@ def test_query_discovery(querytracer_factory, connection):
             ) as s """,
         )
         # Now set up the collector.
+        collector = None
         try:
             collector = querytracer_factory(
                 instrument_flags=InstrumentationFlags.ALL,
@@ -264,6 +277,7 @@ def test_query_discovery(querytracer_factory, connection):
             # Wait a few seconds more to make sure collector has gathered all info
             sleep(3)
         finally:
-            collector.stop()
+            if collector is not None:
+                collector.stop()
     assert events["handle_StackSample"] > 0
     assert events["handle_MemoryNodeData"] > 0

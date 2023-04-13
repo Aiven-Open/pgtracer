@@ -4,7 +4,7 @@ BPF Collector tracing queries.
 from __future__ import annotations
 
 import ctypes as ct
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Dict, List, Optional, Tuple
 
@@ -53,6 +53,20 @@ class QueryTracerOptions(CollectorOptions):
     enable_query_discovery: bool = True
 
 
+@dataclass
+class PerProcessInfo:
+    """
+    Store information about the queries processed by a backend.
+    """
+
+    pid: int
+    last_portal_key: Optional[Tuple[int, int]] = None
+    query_history: List[Query] = field(default_factory=list)
+    query_cache: Dict[Tuple[int, int], Query] = field(default_factory=dict)
+    current_executor: Optional[Tuple[int, int]] = None
+    current_query: Optional[Query] = None
+
+
 # pylint: disable=invalid-name
 class QueryTracerEventHandler(EventHandler):
     """
@@ -60,11 +74,17 @@ class QueryTracerEventHandler(EventHandler):
     """
 
     def __init__(self) -> None:
-        self.query_cache: Dict[Tuple[int, int], Query] = {}
-        self.query_history: List[Query] = []
-        self.last_portal_key: Optional[Tuple[int, int]] = None
-        self.current_executor: Optional[Tuple[int, int]] = None
+        self.per_process_info: Dict[int, PerProcessInfo] = {}
         self.next_request_id = 0
+        self.process_history: List[PerProcessInfo] = []
+
+    def get_process_info(self, pid: int) -> PerProcessInfo:
+        """
+        Returns the process info for a given PID, creating it if needed.
+        """
+        if pid not in self.per_process_info:
+            self.per_process_info[pid] = PerProcessInfo(pid)
+        return self.per_process_info[pid]
 
     def _process_portal_data(
         self, bpf_collector: BPFCollector, event: portal_data, pid: int
@@ -74,13 +94,16 @@ class QueryTracerEventHandler(EventHandler):
         the first live query during query discovery.
         """
         key = event.portal_key.as_tuple()
-        self.current_executor = event.portal_key.as_tuple()
+        process_info = self.get_process_info(pid)
+        process_info.current_executor = event.portal_key.as_tuple()
 
-        if key not in self.query_cache:
-            self.query_cache[key] = Query.from_event(bpf_collector.metadata, event)
+        if key not in process_info.query_cache:
+            process_info.query_cache[key] = Query.from_event(
+                bpf_collector.metadata, event
+            )
         else:
-            self.query_cache[key].update(bpf_collector.metadata, event)
-        bpf_collector.current_query = self.query_cache[key]
+            process_info.query_cache[key].update(bpf_collector.metadata, event)
+        process_info.current_query = process_info.query_cache[key]
         # If perf events are enabled, start watching the query instrumentation.
         if bpf_collector.options.enable_perf_events:
             structs = bpf_collector.metadata.structs
@@ -121,11 +144,12 @@ class QueryTracerEventHandler(EventHandler):
         """
         event = ct.cast(event, ct.POINTER(portal_data)).contents
         key = event.portal_key.as_tuple()
-        if self.current_executor:
-            self.current_executor = None
-            bpf_collector.current_query = None
-        if key in self.query_cache:
-            self.query_cache[event.portal_key.as_tuple()].update(
+        process_info = self.get_process_info(pid)
+        if process_info.current_executor:
+            process_info.current_executor = None
+            process_info.current_query = None
+        if key in process_info.query_cache:
+            process_info.query_cache[event.portal_key.as_tuple()].update(
                 bpf_collector.metadata, event
             )
         return 0
@@ -148,9 +172,12 @@ class QueryTracerEventHandler(EventHandler):
         clean up the query from our current cache, and append it to history.
         """
         event = ct.cast(event, ct.POINTER(portal_data)).contents
-        self.last_portal_key = event.portal_key.as_tuple()
-        if self.last_portal_key in self.query_cache:
-            self.query_cache[self.last_portal_key].update(bpf_collector.metadata, event)
+        process_info = self.get_process_info(pid)
+        process_info.last_portal_key = event.portal_key.as_tuple()
+        if process_info.last_portal_key in process_info.query_cache:
+            process_info.query_cache[process_info.last_portal_key].update(
+                bpf_collector.metadata, event
+            )
         return 0
 
     # pylint: disable=unused-argument
@@ -164,14 +191,15 @@ class QueryTracerEventHandler(EventHandler):
         We remove the query from the internal cache  and append it to history.
         """
         event = ct.cast(event, ct.POINTER(portal_data)).contents
-        if self.last_portal_key is not None:
-            if self.last_portal_key in self.query_cache:
-                query = self.query_cache[self.last_portal_key]
-                self.query_history.append(query)
-                del self.query_cache[self.last_portal_key]
-            self.last_portal_key = None
-        self.current_executor = None
-        bpf_collector.current_query = None
+        process_info = self.get_process_info(pid)
+        if process_info.last_portal_key is not None:
+            if process_info.last_portal_key in process_info.query_cache:
+                query = process_info.query_cache[process_info.last_portal_key]
+                process_info.query_history.append(query)
+                del process_info.query_cache[process_info.last_portal_key]
+            process_info.last_portal_key = None
+        process_info.current_executor = None
+        process_info.current_query = None
         return 0
 
     def handle_ExecProcNodeFirst(
@@ -184,7 +212,8 @@ class QueryTracerEventHandler(EventHandler):
         The goal here is to build a plan tree for the query.
         """
         event = ct.cast(event, ct.POINTER(planstate_data)).contents
-        query = self.query_cache.get(event.portal_key.as_tuple())
+        process_info = self.get_process_info(pid)
+        query = process_info.query_cache.get(event.portal_key.as_tuple())
         if query is None:
             # We don't know this query: maybe it started running before us ?
             return 0
@@ -211,9 +240,10 @@ class QueryTracerEventHandler(EventHandler):
         instrumentation data if any.
         """
         event = ct.cast(event, ct.POINTER(planstate_data)).contents
-        if self.last_portal_key is None:
+        process_info = self.get_process_info(pid)
+        if process_info.last_portal_key is None:
             return 0
-        query = self.query_cache.get(self.last_portal_key)
+        query = process_info.query_cache.get(process_info.last_portal_key)
         if query is None:
             return 0
         node = query.nodes.get(event.planstate_addr)
@@ -236,11 +266,12 @@ class QueryTracerEventHandler(EventHandler):
         can be useful to compute "real" cache hit ratio.
         """
         event = ct.cast(event, ct.POINTER(io_req_data)).contents
+        process_info = self.get_process_info(pid)
         # We try to attach it to a specific query.
         # If we don't have one, don't bother
-        if not self.current_executor:
+        if not process_info.current_executor:
             return 0
-        query = self.query_cache.get(self.current_executor)
+        query = process_info.query_cache.get(process_info.current_executor)
         if query is None:
             return 0
         if b"R" in event.rwbs:
@@ -259,10 +290,11 @@ class QueryTracerEventHandler(EventHandler):
         """
         ev = ct.cast(event, ct.POINTER(memory_response)).contents
 
-        if not self.current_executor:
+        process_info = self.get_process_info(pid)
+        if not process_info.current_executor:
             return 0
         # We have a memory response for the whole query
-        query = self.query_cache.get(ev.request_id.as_tuple(), None)
+        query = process_info.query_cache.get(ev.request_id.as_tuple(), None)
         if query:
             instr = bpf_collector.metadata.structs.Instrumentation(ev.payload_addr)
             query.instrument = instr
@@ -286,9 +318,10 @@ class QueryTracerEventHandler(EventHandler):
         """
         Handle MemoryResponseNodeInstr produced as a response to some memory_request.
         """
-        if not self.current_executor:
+        process_info = self.get_process_info(pid)
+        if not process_info.current_executor:
             return 0
-        query = self.query_cache.get(self.current_executor, None)
+        query = process_info.query_cache.get(process_info.current_executor, None)
         ev = ct.cast(event, ct.POINTER(memory_response)).contents
         nodeid = ev.request_id.as_int()
         # We have a memory response for an individual node
@@ -314,10 +347,11 @@ class QueryTracerEventHandler(EventHandler):
         """
         Handle MemoryNodeData produced as a response for a memory_request.
         """
-        if not self.current_executor:
+        process_info = self.get_process_info(pid)
+        if not process_info.current_executor:
             return 0
         ev = ct.cast(event, ct.POINTER(planstate_data)).contents
-        query = self.query_cache.get(self.current_executor, None)
+        query = process_info.query_cache.get(process_info.current_executor, None)
         if query is not None:
             node = query.add_node_from_event(bpf_collector.metadata, ev)
             if ev.lefttree and ev.lefttree not in query.nodes:
@@ -356,17 +390,18 @@ class QueryTracerEventHandler(EventHandler):
         Handle StackSample events produced during perf sampling.
         """
         ev = ct.cast(event, ct.POINTER(stack_sample)).contents
+        process_info = self.get_process_info(pid)
         _, creation_time = ev.portal_data.portal_key.as_tuple()
         if creation_time:
             self._process_portal_data(bpf_collector, ev.portal_data, pid)
         bpf_collector.bpf[b"discovery_enabled"][ct.c_int(1)] = ct.c_bool(False)
-        if bpf_collector.current_query:
+        if process_info.current_query:
             # Now add the nodes from the stacktrace
-            bpf_collector.current_query.add_nodes_from_stack(
+            process_info.current_query.add_nodes_from_stack(
                 bpf_collector.metadata, ev.stack_data
             )
             # And add memory_requests to gather their information.
-            for node in bpf_collector.current_query.nodes.values():
+            for node in process_info.current_query.nodes.values():
                 if node.is_stub and node.addr:
                     self._gather_node_info(bpf_collector, node.addr, pid)
         return 0
@@ -378,8 +413,9 @@ class QueryTracerEventHandler(EventHandler):
         Handle MemoryAccount events produced by malloc instrumentation.
         """
         ev = ct.cast(event, ct.POINTER(memory_account)).contents
-        if bpf_collector.current_query:
-            bpf_collector.current_query.memallocs.update(ev)
+        process_info = self.get_process_info(pid)
+        if process_info.current_query:
+            process_info.current_query.memallocs.update(ev)
         return 0
 
 
@@ -454,3 +490,10 @@ class QueryTracerBPFCollector(BPFCollector):
             self.bpf[b"discovery_enabled"][ct.c_int(2)] = ct.c_bool(
                 self.options.enable_query_discovery
             )
+
+    def cleanup_process(self, pid: int) -> int:
+        if pid in self.event_handler.per_process_info:
+            self.event_handler.process_history.append(
+                self.event_handler.per_process_info.pop(pid)
+            )
+        return super().cleanup_process(pid)
