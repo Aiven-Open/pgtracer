@@ -582,7 +582,7 @@ class BPFCollector:
         # If we instrument a single pid, exit
         if self.pid == pid:
             print(f"Process {pid} is terminating, stopping collection")
-            self.stop()
+            self.is_running = False
         else:
             try:
                 if pid in self.anon_map_fds:
