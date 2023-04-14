@@ -496,7 +496,7 @@ class Struct:
     fields_defs: Dict[str, StructMemberDefinition]
     metadata: ProcessMetadata
     die: DIE
-    buffer_type: Type
+    buffer_type: Type[ct._CData]
     _fully_loaded: bool = False
     size: int
 
@@ -633,15 +633,6 @@ class Struct:
             if include_all and isinstance(value, Struct):
                 value.as_dict(include_all=True)
         return values
-
-    @classmethod
-    def size(cls) -> int:
-        """
-        Returns the sizeof() this struct as stored in the DWARF information.
-        """
-        size = cls.die.attributes["DW_AT_byte_size"].value
-        assert isinstance(size, int)
-        return size
 
     @classmethod
     def pointer_type(cls) -> Type[DWARFPointer]:

@@ -6,13 +6,12 @@ from __future__ import annotations
 import ctypes as ct
 from typing import TYPE_CHECKING, Dict, Optional
 
+from ..ebpf.collector.c_defs import plan_data, planstate_data
+from ..ebpf.dwarf import ProcessMetadata, Struct
 from ..utils import timespec_to_float
 
 if TYPE_CHECKING:
     from enum import IntEnum
-
-from ..ebpf.collector.c_defs import plan_data, planstate_data
-from ..ebpf.dwarf import ProcessMetadata, Struct
 
 
 def explain_dict_to_str(parts: Dict[str, str]) -> str:

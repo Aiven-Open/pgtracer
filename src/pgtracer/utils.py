@@ -7,9 +7,11 @@ import itertools
 import re
 import subprocess
 from datetime import timedelta
-from typing import TYPE_CHECKING, BinaryIO, Optional
+from typing import TYPE_CHECKING, BinaryIO, Optional, Union
 
 from pypsutil import Process
+
+from pgtracer.ebpf.dwarf import Struct
 
 if TYPE_CHECKING:
     from ctypes import _CData
@@ -17,7 +19,7 @@ else:
     _CData = object
 
 
-def timespec_to_timedelta(timespec: _CData) -> timedelta:
+def timespec_to_timedelta(timespec: Union[_CData, Struct]) -> timedelta:
     """
     Convert a timespec_t or instr_time struct to a timedelta.
     """
