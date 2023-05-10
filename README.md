@@ -34,7 +34,8 @@ You will need a running PostgreSQL install, and it's debug symbols.
 
 For pgtracer itself you will need:
  - libunwind installed on the system
- - the [BPF Compiler Collection](https://github.com/iovisor/bcc/blob/master/INSTALL.md)
+ - the [BPF Compiler Collection](https://github.com/iovisor/bcc/blob/master/INSTALL.md). It needs to have support for
+   ringbuffers, so at least the 0.16 version.
  - several python packages as dependencies:
    - `psutil`
    - `pyelftools`
@@ -44,10 +45,13 @@ library versions, as well as how PostgreSQL was compiled.
 
 Please file a bug if it doesn't work as expected.
 
-Ubuntu
+Ubuntu / Debian
 ------------
 
 To install the debug symbols, install the `postgresql-version-dbgsym` package. You may have to enable additional repositories though.
+
+Make sure your Ubuntu or Debian version ships with a semi-recent version of python3-bpfcc. Ubuntu 22.04 LTS works in
+that regard.
 
 To run pgtracer you will need some python packages as well as packages only available from the repos.
 
