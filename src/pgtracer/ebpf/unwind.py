@@ -165,6 +165,88 @@ if ARCH == "x86_64":
             ("unwind_info_size", ct.c_int),
             ("unwind_info", ct.c_void_p),
             ("extra", unw_tdep_proc_info_t),
+        ]
+
+elif ARCH == "aarch64":
+    UNW_TDEP_CURSOR_LEN = 256  # Placeholder value, adapt as needed
+    unw_word_t = ct.c_ulonglong
+    UNW_WORD_T_FORMAT = "<Q"
+    unw_tdep_fpreg_t = ct.c_longdouble
+    MAX_STACK_READ = 1 << 16
+    stack_array = ct.c_ubyte * MAX_STACK_READ
+    REG_NAMES = [
+        "x0",
+        "x1",
+        "x2",
+        "x3",
+        "x4",
+        "x5",
+        "x6",
+        "x7",
+        "x8",
+        "x9",
+        "x10",
+        "x11",
+        "x12",
+        "x13",
+        "x14",
+        "x15",
+        "x16",
+        "x17",
+        "x18",
+        "x19",
+        "x20",
+        "x21",
+        "x22",
+        "x23",
+        "x24",
+        "x25",
+        "x26",
+        "x27",
+        "x28",
+        "x29",
+        "x30",
+        "sp",
+        "pc",
+    ]
+    UNW_REG_IP = REG_NAMES.index("pc")
+
+    # This corresponds to the stack and registers captured from ebpf,
+    # and is architecture specific
+    class stack_data_t(ct.Structure):
+        """
+        Mapping of stack_data_t type, defined in ebpf code.
+        """
+
+        _fields_ = [(reg, ct.c_ulong) for reg in REG_NAMES] + [
+            ("size", ct.c_ulong),
+            ("start_addr", ct.c_ulong),
+            ("stack", stack_array),
+        ]
+
+    class unw_tdep_proc_info_t(ct.Structure):
+        """
+        Mapping of unw_tdep_proc_info_t
+        """
+
+        _fields_ = [("unused", ct.c_char)]
+
+    class unw_proc_info_t(ct.Structure):
+        """
+        Mapping of unw_proc_info_t type
+        """
+
+        _fields_ = [
+            ("start_ip", unw_word_t),
+            ("end_ip", unw_word_t),
+            ("lsda", unw_word_t),
+            ("handler", unw_word_t),
+            ("gp", unw_word_t),
+            ("flags", unw_word_t),
+            ("format", ct.c_int),
+            ("unwind_info_size", ct.c_int),
+            ("unwind_info", ct.c_void_p),
+            ("extra", unw_tdep_proc_info_t),
         ]  # FIXME; this type
 
 else:
