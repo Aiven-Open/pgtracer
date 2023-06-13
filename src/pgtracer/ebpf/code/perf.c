@@ -93,7 +93,7 @@ int perf_event(struct bpf_perf_event_data *ctx)
 				}
 				if (need_node)
 				{
-					capture_stack(&(ctx->regs), &(stack_sample->stack_data), MAX_STACK_READ);
+					capture_stack((struct pt_regs *)&(ctx->regs), &(stack_sample->stack_data), MAX_STACK_READ);
 				}
 				event_ring.ringbuf_submit(stack_sample, 0);
 			}
