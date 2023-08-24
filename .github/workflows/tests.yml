@@ -11,6 +11,7 @@ jobs:
 
   tests:
     runs-on: ubuntu-22.04
+
     # We don't fail on dev versions, as those are snapshots
     continue-on-error: ${{ matrix.experimental }}
     strategy:
@@ -56,6 +57,11 @@ jobs:
           sudo pip install -U pip toml
           # Install requirements from pyproject.toml
           sudo pip install -e '.[test]'
+
+      - name: Set Swap Space
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 10
 
       - id: tests
         run: |
